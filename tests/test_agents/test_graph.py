@@ -36,9 +36,23 @@ from backend.memory import SessionRegistry, thread_config  # noqa: E402
 # 1. 零节点图可以编译
 # --------------------------------------------------------------------------- #
 def test_graph_compiles_without_nodes() -> None:
-    compiled = compile_graph()
+    # 零节点路径用显式空映射验证，与全局注册表解耦
+    # （RAG 节点接入后注册表不再为空，见 test_rag_nodes_are_registered）
+    compiled = compile_graph(nodes={})
     assert compiled is not None
-    assert node_names(compiled) == [], "骨架阶段不应有任何业务节点"
+    assert node_names(compiled) == [], "显式空注册表时不应有任何业务节点"
+
+
+def test_rag_nodes_are_registered() -> None:
+    """RAG 侧节点已接入：默认注册表构建的图上应出现检索与生成链路的节点。"""
+
+    compiled = compile_graph()
+    names = node_names(compiled)
+    for expected in ("rewrite", "retrieve", "rerank", "build_context", "generate", "verify"):
+        assert expected in names, f"缺少节点 {expected}（实际：{names}）"
+    # 顺序必须遵循 NODE_SEQUENCE，而不是注册顺序或字母序
+    assert names.index("retrieve") < names.index("rerank") < names.index("build_context")
+    assert names.index("generate") < names.index("verify")
 
 
 # --------------------------------------------------------------------------- #
@@ -100,7 +114,8 @@ def test_blank_graph_node_names_are_empty() -> None:
 # 4. 检查点按 thread_id 隔离
 # --------------------------------------------------------------------------- #
 def test_checkpointer_isolates_threads() -> None:
-    compiled = compile_graph(checkpointer=InMemorySaver())
+    # 本用例只验证检查点隔离，故用零节点图（nodes={}）：不依赖知识库索引
+    compiled = compile_graph(checkpointer=InMemorySaver(), nodes={})
 
     async def scenario() -> None:
         await compiled.ainvoke(

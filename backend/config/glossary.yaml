@@ -1,0 +1,127 @@
+# 术语归一表（开发文档 4.3 rewrite 节点：术语归一，代码词典 + 模型兜底）
+#
+# 结构：
+#   terms：规范词 -> 同义词列表（含中英混写、常见错写、口语说法）
+#   device_models：设备别名 -> 规范型号（用于元数据过滤时把口语型号归一）
+#
+# 使用方式：backend/tools/kb_tools.py 的 glossary_lookup() 读取本文件，
+# rewrite 节点用规范词替换同义词，并把规范词拼成额外检索式。
+#
+# 维护约定：术语表属配置文件，可随时追加；追加后**必须**跑一次评测
+# （`scripts/eval.py`），因为改写策略会直接影响命中率。
+
+# 规范词 -> 同义词
+terms:
+  刻蚀机:
+    - Etcher
+    - etch 机
+    - 蚀刻机
+    - 刻蚀设备
+    - etcher
+  真空度:
+    - chamber pressure
+    - 腔体压力
+    - 腔压
+    - 真空压力
+    - 本底真空
+  真空泵:
+    - pump
+    - 干泵
+    - 机械泵
+    - 分子泵
+    - turbo pump
+    - dry pump
+  抽速:
+    - pumping speed
+    - 抽气速率
+    - 泵速
+  O-ring:
+    - O型圈
+    - O 型密封圈
+    - 密封圈
+    - oring
+    - o ring
+  密封:
+    - seal
+    - 密封性
+    - 气密
+    - 漏气
+    - 泄漏
+  压力传感器:
+    - pressure sensor
+    - 真空计
+    - 压力计
+    - 传感器零点
+    - 零点漂移
+  射频功率:
+    - RF power
+    - RF
+    - 射频电源
+    - 匹配网络
+  清洗周期:
+    - 清洗频次
+    - PM 周期
+    - 保养周期
+    - 维护间隔
+  薄膜沉积:
+    - CVD
+    - PVD
+    - 沉积
+    - 镀膜
+  前驱体:
+    - precursor
+    - 反应气体
+    - 工艺气体
+  沉积温度:
+    - 基片温度
+    - 衬底温度
+    - 温度窗口
+  均匀性:
+    - uniformity
+    - 厚度均匀性
+    - 膜厚均匀
+  兆声波:
+    - megasonic
+    - 超声波
+    - 兆声
+  药液:
+    - 化学品
+    - 清洗液
+    - chemical
+  上锁挂牌:
+    - LOTO
+    - lockout tagout
+    - 挂牌上锁
+  备件:
+    - spare parts
+    - 备品备件
+    - 易损件
+    - 耗材
+  到货周期:
+    - 交期
+    - lead time
+    - 采购周期
+  报警码:
+    - alarm code
+    - 报警代码
+    - 错误码
+    - 故障码
+
+# 设备别名 -> 规范型号（元数据过滤用；device_model 字段取值以此为准）
+device_models:
+  Etcher-A:
+    - 刻蚀机A
+    - 刻蚀机 A
+    - ETCHER-A
+    - etcher-a
+  CVD-200:
+    - CVD200
+    - cvd-200
+    - 沉积设备
+  Cleaner-C:
+    - 清洗机C
+    - cleaner-c
+    - 清洗设备
+  通用:
+    - all
+    - 通用设备

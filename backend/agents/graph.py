@@ -31,13 +31,14 @@
 
 from __future__ import annotations
 
+import importlib
 import logging
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Callable
 
 from langgraph.graph import END, START, StateGraph
 
-from .nodes import NODE_SEQUENCE, registered_nodes
+from .nodes import NODE_SEQUENCE, NodeName, registered_nodes
 from .state import AgentState
 
 if TYPE_CHECKING:  # pragma: no cover - 仅供类型检查
@@ -47,6 +48,35 @@ logger = logging.getLogger(__name__)
 
 #: 图的名称，出现在 stream / 追踪信息中
 GRAPH_NAME = "smka_qa_graph"
+
+#: RAG 侧节点模块（缺任一即视为实现缺陷，直接报错而不是静默少节点）
+_REQUIRED_NODE_MODULES: tuple[str, ...] = ("retrieval", "generation")
+
+#: 平台侧节点模块（可能尚未实现；导入失败只警告，不影响检索/生成链路）
+_OPTIONAL_NODE_MODULES: tuple[str, ...] = ("multimodal",)
+
+
+def _load_node_modules() -> None:
+    """导入节点实现模块，触发各模块底部的 register_node()。
+
+    放在函数内而不是模块顶层，避免 nodes <-> graph 的循环 import。
+    各节点模块自己注册，**不改 nodes/__init__.py 的注册表文件**（协作规范 §3.4）。
+    """
+
+    package = __package__ or "backend.agents"
+    for module in _REQUIRED_NODE_MODULES:
+        importlib.import_module(f"{package}.nodes.{module}")
+    for module in _OPTIONAL_NODE_MODULES:
+        name = f"{package}.nodes.{module}"
+        try:
+            importlib.import_module(name)
+        except ModuleNotFoundError as exc:
+            if exc.name and exc.name.startswith("backend.agents.nodes"):
+                continue
+            raise
+        except Exception as exc:  # noqa: BLE001 - 平台侧节点未就绪时降级（R7 同一原则）
+            logger.warning("节点模块 %s 导入失败（%s），该分支暂不参与拓扑", module, exc)
+
 
 
 def _order(names: list[str]) -> list[str]:
@@ -78,6 +108,7 @@ def build_graph(
     未编译的 StateGraph，交给 compile_graph() 挂检查点后使用。
     """
 
+    _load_node_modules()
     registry = dict(registered_nodes() if nodes is None else nodes)
     graph: StateGraph = StateGraph(AgentState)
 
@@ -87,26 +118,57 @@ def build_graph(
         logger.debug("build_graph: 未注册任何节点，图以 START -> END 直连编译")
         return graph
 
-    # ---- 已注册节点时的临时线性拓扑 ----
-    # TODO(节点/边接入): 这里是「链路打通」到「真实拓扑」的切换点。
-    #  1) retrieve 之后需要条件边判断证据是否充分：
-    #         graph.add_conditional_edges(
-    #             NodeName.RETRIEVE,
-    #             should_augment,                # (state) -> "augment" | "generate"
-    #             {NodeName.AUGMENT: NodeName.AUGMENT,
-    #              NodeName.GENERATE: NodeName.GENERATE},
-    #         )
-    #     同时删掉下面 zip() 中 retrieve -> rerank 的直线段。
-    #  2) ingest_image 为可选节点，与检索并行时应使用并行分支而非串行。
+    # ---- 真实拓扑（开发文档 4.3）----
+    #   ... -> build_context -> [证据是否足够?] --是--> generate -> verify -> END
+    #                                     |否
+    #                                     v
+    #                                  augment -------------------^
+    #
+    # 条件边只在 augment（平台侧 ingest_image/augment 节点）已注册时启用；
+    # 未注册时退回线性拓扑，保证 RAG 侧的 retrieve/rerank/verify 现在就能跑。
     ordered = _order(list(registry))
     for name in ordered:
         graph.add_node(name, registry[name])
     graph.add_edge(START, ordered[0])
+
+    branch_from = NodeName.BUILD_CONTEXT
+    augment_name = NodeName.AUGMENT
+    generate_name = NodeName.GENERATE
+    has_branch = (
+        augment_name in registry and branch_from in registry and generate_name in registry
+    )
+
+    #: 被条件边取代、不再需要画的线性边
+    replaced: set[tuple[str, str]] = set()
+
+    def _next_of(name: str) -> str | None:
+        index = ordered.index(name) if name in ordered else -1
+        return ordered[index + 1] if 0 <= index < len(ordered) - 1 else None
+
+    if has_branch:
+        from .nodes.retrieval import should_augment  # 判定属检索侧（证据是否充分）
+
+        graph.add_conditional_edges(
+            branch_from,
+            should_augment,
+            {augment_name: augment_name, generate_name: generate_name},
+        )
+        graph.add_edge(augment_name, generate_name)
+        after_build = _next_of(branch_from)
+        if after_build:
+            replaced.add((branch_from, after_build))
+        after_augment = _next_of(augment_name)
+        if after_augment:
+            replaced.add((augment_name, after_augment))
+        logger.debug("build_graph: 已启用条件边 %s -> (%s | %s)", branch_from, augment_name, generate_name)
+
     for current_node, next_node in zip(ordered, ordered[1:]):
+        if (current_node, next_node) in replaced:
+            continue
         graph.add_edge(current_node, next_node)
     graph.add_edge(ordered[-1], END)
     logger.debug(
-        "build_graph: 已接入 %d 个节点，线性拓扑 %s", len(ordered), " -> ".join(ordered)
+        "build_graph: 已接入 %d 个节点，拓扑 %s", len(ordered), " -> ".join(ordered)
     )
     return graph
 

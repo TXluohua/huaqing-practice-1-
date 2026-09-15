@@ -75,6 +75,8 @@ class Settings(BaseSettings):
 
     # ---------------------------------------------------------------- 模型
     deepseek_api_key: str = ""
+    #: DeepSeek 接口地址（追加字段：开发文档附录 C 的 DEEPSEEK_BASE_URL）
+    deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_model: str = "deepseek-chat"
     dashscope_api_key: str = ""
     vlm_model: str = "qwen-vl-max"
@@ -91,6 +93,73 @@ class Settings(BaseSettings):
     confidence_medium: float = 0.60
     #: 精排最高分低于该值即拒答
     reject_score_threshold: float = 0.0
+
+    # ------------------------------------------------ RAG 检索与向量化（追加）
+    # 2026-09 追加（RAG 侧接入需要；全部为新增字段，未改动上面任何既有字段）。
+    #: embedding 提供方：local（默认，本地 HF 模型）/ auto / ollama / hashing / dashscope
+    #:
+    #: **默认 local：向量化完全在本地跑，不调用任何外部 API。**
+    #: - local  ：本地 HuggingFace 模型（embedding_model），模型缺失即报错并提示
+    #:            运行 scripts/prepare_model.py（不静默降级、不偷偷调云端接口）
+    #: - auto   ：local → ollama → hashing 的降级链（**不含云端接口**）
+    #: - dashscope：仅在你显式配置时才用阿里云接口（属云端调用，默认不用）
+    embedding_provider: str = "local"
+    #: 本地向量化模型：HuggingFace 仓库名，或**绝对路径**（指向已部署的模型目录）
+    embedding_model: str = "BAAI/bge-large-zh-v1.5"
+    #: 只允许用本地模型、不发起下载（无外网环境必须为 True；默认即纯本地）
+    embedding_offline: bool = True
+    #: 本地模型目录：HF_HOME 指向此处 —— 模型落在项目内，不写用户家目录。
+    #: 部署（Docker / 换机）只需同步这一个目录，或在构建阶段下载一次。
+    model_dir: Path = DATA_DIR / "models"
+    #: 是否允许联网下载模型（仅 scripts/prepare_model.py --download 时临时打开）
+    model_allow_download: bool = False
+    #: HuggingFace 端点（留空则沿用环境变量 HF_ENDPOINT；国内常用 https://hf-mirror.com）
+    hf_endpoint: str = ""
+    #: Ollama 本地服务（开发文档 5.3 的 bge-m3 路线）
+    ollama_base_url: str = "http://127.0.0.1:11434"
+    ollama_embedding_model: str = "bge-m3"
+    #: 阿里云向量化模型（配置 DASHSCOPE_API_KEY 后可用）
+    dashscope_embedding_model: str = "text-embedding-v3"
+    #: 向量库后端：auto / chroma / simple（simple 为内置零依赖兜底实现）
+    vector_backend: str = "auto"
+    #: 精排提供方：auto / cross-encoder / lexical
+    rerank_provider: str = "auto"
+    #: 精排模型：仓库名或项目内模型目录路径（默认 backend/data/models/bge-reranker-v2-m3）
+    rerank_model: str = "BAAI/bge-reranker-v2-m3"
+    #: 送入精排的候选上限（按融合分取前 N）。CPU 实测：bge-reranker-v2-m3 每对约 0.3~0.5s，
+    #: 32 对要 30s+ —— 会直接顶穿 P95 ≤ 8s，故必须限流。有 GPU 时可调到 20~30 提升召回。
+    rerank_max_candidates: int = 12
+    #: 精排输入的最大 token 数（截断）。256 相比默认 512 约省一半时间，
+    #: 对「查询-切片相关性」判断影响很小（关键信息通常在切片开头）。
+    rerank_max_length: int = 256
+    #: 精排批大小
+    rerank_batch_size: int = 8
+    #: 混合检索权重（BM25 词法 / 向量语义），RRF 融合用
+    bm25_weight: float = 0.4
+    vector_weight: float = 0.6
+    #: RRF 平滑常数（越大越平缓）
+    rrf_k: int = 60
+    #: 「证据是否充分」判定阈值（精排**绝对分**，0~1；不是 min-max 相对分）
+    #: Cross-Encoder 路径用本值（sigmoid 概率，0.5 近似相关/不相关分界）
+    sufficient_score_threshold: float = 0.5
+    #: lexical 降级精排的阈值：lexical 分数量纲偏低（实测正样本 0.30~0.70），
+    #: 故只作「明显不相关」的软下限，负样本主要靠 anchor_check 的型号/术语规则拦。
+    #: 换回 Cross-Encoder 后应使用 sufficient_score_threshold。
+    sufficient_score_threshold_lexical: float = 0.25
+    #: 问题关键术语在检索材料中的覆盖率下限（低于即拒答，见 citation.anchor_check）
+    anchor_term_coverage: float = 0.5
+    #: 问题关键术语在**整个知识库**中缺失的比例上限（超出即判「知识库未覆盖」）
+    #: 依据 20 条黄金集实测：正样本最大 0.33、负样本 0.43，取 0.40 留双向余量；
+    #: 黄金集扩到 50 条后必须重新校准。
+    anchor_kb_missing_ratio: float = 0.4
+    #: 引用来源权威度权重（置信度公式的 0.25 项，键为 category）
+    authority_weights: dict[str, float] = {
+        "标准": 1.0,
+        "设备维护": 0.9,
+        "工艺": 0.85,
+        "ticket": 0.6,
+        "image": 0.5,
+    }
 
     # ---------------------------------------------------------------- MCP
     mcp_ticket_server: str = str(BACKEND_DIR / "mcp_servers" / "ticket_server.py")
