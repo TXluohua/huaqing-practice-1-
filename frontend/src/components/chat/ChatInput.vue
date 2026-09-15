@@ -1,0 +1,437 @@
+<script setup lang="ts">
+/**
+ * 输入区：文字、图片上传、粘贴截图、检索条件、停止生成。
+ *
+ * 几个契约要点：
+ *
+ *   - **图片走两段式**（接口文档 §4.2/§7）：选中即上传拿 image_id，
+ *     提问时只在 image_ids 里带 ID。SSE 端点本身不处理文件上传。
+ *   - **粘贴截图**（FR-02 的现场场景）：`paste` 事件里读 clipboardData.files。
+ *     必须 preventDefault，否则浏览器会把图片粘贴成 base64 塞进输入框。
+ *   - **培训模式**是接口文档 §8 的缺口①（state.py 没有该字段），
+ *     照发但标注「实验性」，后端拒绝时按普通错误提示，不影响问答主链路。
+ *
+ * 视觉上整个输入区是一张卡片：工具栏、文本框、按钮都在同一张卡里，
+ * 而不是「文本框 + 一排按钮」拼起来。所以 textarea 自身不要边框，
+ * 由卡片承担聚焦态的高亮。
+ */
+import { Filter, Picture, Promotion, VideoPause } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
+import { computed, onBeforeUnmount, ref } from 'vue'
+
+import { IMAGE_MAX_COUNT, QUESTION_MAX_LEN } from '@/api/chat'
+import { humanizeError } from '@/api/http'
+import { IMAGE_LIMITS } from '@/api/upload'
+import ImageThumb from '@/components/chat/ImageThumb.vue'
+import { useChatStore } from '@/stores/chat'
+
+const chatStore = useChatStore()
+
+const text = ref('')
+const showFilters = ref(false)
+/** el-upload 需要 ref 才能手动触发选择文件 */
+const uploadRef = ref()
+/** 卡片聚焦态由自己维护：textarea 的 focus 事件在 EP 里被包了一层 */
+const focused = ref(false)
+
+const accept = computed(() => IMAGE_LIMITS.mime.join(','))
+
+const charCount = computed(() => text.value.length)
+const overLimit = computed(() => charCount.value > QUESTION_MAX_LEN)
+const hasUploading = computed(() => chatStore.pendingImages.some((img) => img.uploading))
+const canSend = computed(
+  () => !!text.value.trim() && !overLimit.value && !chatStore.streaming && !hasUploading.value,
+)
+
+/** 接近上限时才显示计数，平时不占视觉噪音 */
+const showCount = computed(() => charCount.value > QUESTION_MAX_LEN * 0.6)
+
+/** 发送：清空输入框的时机在 send 成功入队之后，失败时保留用户输入 */
+async function submit(): Promise<void> {
+  if (!canSend.value) return
+  const question = text.value
+  try {
+    await chatStore.send(question)
+    text.value = ''
+  } catch (error) {
+    ElMessage.error(humanizeError(error))
+  }
+}
+
+/** Enter 发送、Shift+Enter 换行（中文输入法组合态下不触发） */
+function onKeydown(event: KeyboardEvent): void {
+  if (event.key !== 'Enter' || event.shiftKey) return
+  if (event.isComposing) return
+  event.preventDefault()
+  void submit()
+}
+
+async function addFile(file: File): Promise<void> {
+  try {
+    await chatStore.addImage(file)
+  } catch (error) {
+    ElMessage.error(humanizeError(error))
+  }
+}
+
+/** 粘贴截图：FR-02 的主要入口，工程师习惯直接复制告警画面 */
+function onPaste(event: ClipboardEvent): void {
+  const files = Array.from(event.clipboardData?.files ?? []).filter((file) =>
+    file.type.startsWith('image/'),
+  )
+  if (files.length === 0) return
+  // 阻止浏览器把图片转成 base64 插进 textarea
+  event.preventDefault()
+  for (const file of files) void addFile(file)
+}
+
+function onSelectFile(file: { raw?: File }): boolean {
+  if (file.raw) void addFile(file.raw)
+  return false
+}
+
+function onRemove(localId: string): void {
+  chatStore.removeImage(localId)
+}
+
+onBeforeUnmount(() => {
+  // 输入区里尚未发送的图片 blob URL 需要释放
+  chatStore.clearImages()
+})
+</script>
+
+<template>
+  <div class="composer">
+    <div class="composer__wrap">
+      <!-- 待发送的图片 -->
+      <div v-if="chatStore.pendingImages.length" class="composer__images">
+        <ImageThumb
+          v-for="img in chatStore.pendingImages"
+          :key="img.localId"
+          :image="img"
+          removable
+          :size="62"
+          @remove="onRemove"
+        />
+      </div>
+
+      <!-- 检索条件（接口文档 §4.3：device_model 走元数据过滤，category 走分类过滤） -->
+      <transition name="filters">
+        <div v-if="showFilters" class="composer__filters">
+          <el-input
+            v-model="chatStore.deviceModel"
+            size="small"
+            placeholder="设备型号，如 Etcher-A（用于元数据过滤）"
+            clearable
+          />
+          <el-select v-model="chatStore.category" size="small" placeholder="分类" clearable>
+            <el-option label="设备维护" value="设备维护" />
+            <el-option label="工艺" value="工艺" />
+            <el-option label="标准" value="标准" />
+          </el-select>
+        </div>
+      </transition>
+
+      <!-- 输入卡片 -->
+      <div class="composer__card" :class="{ 'composer__card--focus': focused }">
+        <el-input
+          v-model="text"
+          class="composer__textarea"
+          type="textarea"
+          :rows="2"
+          :autosize="{ minRows: 2, maxRows: 8 }"
+          resize="none"
+          :placeholder="`描述现象或提问，可粘贴截图（Enter 发送，Shift+Enter 换行）`"
+          @keydown="onKeydown"
+          @paste="onPaste"
+          @focus="focused = true"
+          @blur="focused = false"
+        />
+
+        <div class="composer__bar">
+          <div class="composer__bar-left">
+            <el-upload
+              ref="uploadRef"
+              :accept="accept"
+              :show-file-list="false"
+              :auto-upload="false"
+              :on-change="onSelectFile"
+            >
+              <el-tooltip
+                :content="
+                  chatStore.canAttachMore
+                    ? `添加图片（最多 ${IMAGE_MAX_COUNT} 张，单张 ≤ ${IMAGE_LIMITS.maxMb}MB）`
+                    : `最多 ${IMAGE_MAX_COUNT} 张`
+                "
+                placement="top"
+                :show-after="300"
+              >
+                <button
+                  class="composer__icon-btn"
+                  type="button"
+                  :disabled="!chatStore.canAttachMore"
+                >
+                  <el-icon><Picture /></el-icon>
+                  图片
+                </button>
+              </el-tooltip>
+            </el-upload>
+
+            <button
+              class="composer__icon-btn"
+              :class="{ 'composer__icon-btn--on': showFilters }"
+              type="button"
+              @click="showFilters = !showFilters"
+            >
+              <el-icon><Filter /></el-icon>
+              检索条件
+            </button>
+
+            <el-radio-group v-model="chatStore.mode" size="small" class="composer__mode">
+              <el-radio-button value="qa">问答</el-radio-button>
+              <el-radio-button value="training">培训讲解</el-radio-button>
+            </el-radio-group>
+          </div>
+
+          <div class="composer__bar-right">
+            <span
+              v-if="showCount || overLimit"
+              class="composer__count tnum"
+              :class="{ 'composer__count--over': overLimit }"
+            >
+              {{ charCount }} / {{ QUESTION_MAX_LEN }}
+            </span>
+
+            <!-- 培训模式是接口文档 §8 缺口①，标注实验性以免被当成稳定能力 -->
+            <span v-if="chatStore.mode === 'training'" class="composer__badge">实验性</span>
+
+            <el-button
+              v-if="chatStore.streaming"
+              size="small"
+              :icon="VideoPause"
+              @click="chatStore.stop()"
+            >
+              停止
+            </el-button>
+            <el-button
+              v-else
+              type="primary"
+              :icon="Promotion"
+              :disabled="!canSend"
+              @click="submit"
+            >
+              发送
+            </el-button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 状态提示：上传中 / 超长。两者互斥，同时只出一条 -->
+      <p v-if="hasUploading" class="composer__tip">
+        <span class="composer__spinner" />
+        图片上传中，请稍候…
+      </p>
+      <p v-else-if="overLimit" class="composer__tip composer__tip--error">
+        已超过 {{ QUESTION_MAX_LEN }} 字上限，请精简后再发送。
+      </p>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.composer {
+  flex: 0 0 auto;
+  background: var(--surface-1);
+}
+
+/* 与消息列同宽，输入框和上方的对话内容左右对齐 */
+.composer__wrap {
+  width: 100%;
+  max-width: var(--conversation-w);
+  padding: 0 var(--sp-5) var(--sp-5);
+  margin: 0 auto;
+}
+
+.composer__images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
+  margin-bottom: var(--sp-2);
+  background: var(--surface-0);
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-md);
+}
+
+.composer__filters {
+  display: flex;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
+  margin-bottom: var(--sp-2);
+  background: var(--surface-0);
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-md);
+}
+
+/* ------------------------------------------------------------------ 卡片 */
+.composer__card {
+  padding: var(--sp-2) var(--sp-3) var(--sp-2);
+  background: var(--surface-0);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-lg);
+  box-shadow: var(--sh-md);
+  transition: border-color 0.18s var(--ease), box-shadow 0.18s var(--ease);
+}
+
+/* 聚焦时整卡高亮，而不是给 textarea 画一圈内边框 */
+.composer__card--focus {
+  border-color: var(--brand-400);
+  box-shadow: var(--sh-md), 0 0 0 3px rgb(37 99 235 / 10%);
+}
+
+/* 去掉 EP textarea 自带的边框与内阴影，让卡片成为唯一视觉边界 */
+.composer__textarea :deep(.el-textarea__inner) {
+  padding: var(--sp-2) var(--sp-2) 0;
+  font-family: inherit;
+  font-size: var(--fs-md);
+  line-height: 1.7;
+  color: var(--ink-900);
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+.composer__textarea :deep(.el-textarea__inner::placeholder) {
+  color: var(--ink-300);
+}
+
+/* ------------------------------------------------------------------ 工具栏 */
+.composer__bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  align-items: center;
+  justify-content: space-between;
+  padding-top: var(--sp-2);
+  margin-top: var(--sp-2);
+  border-top: 1px solid var(--line-1);
+}
+
+.composer__bar-left,
+.composer__bar-right {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: center;
+}
+
+/* 文字按钮而非 EP 的按钮：工具栏里三个控件都是低频操作，不该抢主按钮的注意力 */
+.composer__icon-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  font-family: inherit;
+  font-size: var(--fs-xs);
+  color: var(--ink-500);
+  cursor: pointer;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  transition: color 0.15s var(--ease), background 0.15s var(--ease);
+}
+
+.composer__icon-btn:hover:not(:disabled) {
+  color: var(--brand-600);
+  background: var(--brand-50);
+}
+
+.composer__icon-btn--on {
+  color: var(--brand-600);
+  background: var(--brand-50);
+}
+
+.composer__icon-btn:disabled {
+  color: var(--ink-300);
+  cursor: not-allowed;
+}
+
+/* el-upload 会包一层 div，让它与相邻按钮的基线对齐 */
+.composer__bar-left :deep(.el-upload) {
+  display: inline-flex;
+}
+
+.composer__mode :deep(.el-radio-button__inner) {
+  padding: 5px 12px;
+  font-size: var(--fs-xs);
+}
+
+.composer__count {
+  font-size: var(--fs-xs);
+  color: var(--ink-400);
+}
+
+.composer__count--over {
+  font-weight: 600;
+  color: var(--danger-600);
+}
+
+.composer__badge {
+  padding: 1px 7px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--warn-600);
+  background: var(--warn-50);
+  border-radius: var(--r-pill);
+}
+
+/* ------------------------------------------------------------------ 提示 */
+.composer__tip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 2px 0;
+  font-size: var(--fs-xs);
+  color: var(--ink-400);
+}
+
+.composer__tip--error {
+  color: var(--danger-600);
+}
+
+.composer__spinner {
+  width: 11px;
+  height: 11px;
+  border: 1.6px solid var(--brand-100);
+  border-top-color: var(--brand-600);
+  border-radius: 50%;
+  animation: composer-spin 0.7s linear infinite;
+}
+
+@keyframes composer-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ------------------------------------------------------------ 过渡动画 */
+.filters-enter-active,
+.filters-leave-active {
+  transition: opacity 0.18s var(--ease), transform 0.18s var(--ease);
+}
+.filters-enter-from,
+.filters-leave-to {
+  opacity: 0;
+  transform: translateY(-4px);
+}
+
+@media (max-width: 720px) {
+  .composer__wrap {
+    padding-right: var(--sp-4);
+    padding-left: var(--sp-4);
+  }
+  /* 窄屏下模式切换换行到第二排，避免把发送按钮挤出去 */
+  .composer__bar {
+    align-items: flex-end;
+  }
+}
+</style>

@@ -24,3 +24,9 @@ backend/data/
 # ---- 日志 ----
 *.log
 logs/
+
+# ---- 前端（Vue3 + Vite）----
+node_modules/
+frontend/dist/
+frontend/.vite/
+*.tsbuildinfo

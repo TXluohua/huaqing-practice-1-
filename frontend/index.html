@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>半导体设备维护知识库智能问答系统</title>
+    <!--
+      首屏兜底：Vue 挂载成功后会把 #app 的内容整个替换掉。
+      这里先放一段静态文案，避免「脚本解析失败」时白白一片（无 JS 环境同理）。
+    -->
+    <style>
+      #app-boot {
+        font-family: system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+        color: #606266;
+        text-align: center;
+        padding: 80px 16px;
+        line-height: 1.8;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <div id="app-boot">
+        <p>正在加载半导体设备维护知识库智能问答系统…</p>
+        <p style="font-size: 13px">若长时间停留在此页面，请打开浏览器控制台查看前端是否报错。</p>
+      </div>
+    </div>
+    <noscript>
+      <p style="text-align: center; color: #f56c6c">当前浏览器已禁用 JavaScript，本系统无法运行。</p>
+    </noscript>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
