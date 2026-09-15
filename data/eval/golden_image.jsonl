@@ -1,0 +1,3 @@
+{"id":"img001","image":"fixtures/alarm_E2041.png","question":"这个报警怎么处理？","expect_extract":{"alarm_codes":["E-2041"]},"must_cite":["刻蚀设备维护手册#5.2"],"negative":false}
+{"id":"img002","image":"fixtures/cvd_param_table.png","question":"这张参数表里的沉积温度、腔体压力和硅烷流量分别是多少？","expect_extract":{"temperatures_c":[780],"pressures_pa":[300],"gas_flows_sccm":[{"gas":"SiH4","value":350}]},"must_cite":["CVD 薄膜沉积工艺规范#2.1","CVD 薄膜沉积工艺规范#2.2","CVD 薄膜沉积工艺规范#2.3"],"negative":false}
+{"id":"img003","image":"fixtures/handwritten_note.png","question":"这张手写纸条上写的是什么？","expect_extract":{"unrecognizable":true},"must_cite":[],"negative":true,"note":"图片模糊不可识别，不允许猜测内容，必须提示用户改用文字描述；给出任何具体文字或数值即判不通过"}

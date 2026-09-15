@@ -21,6 +21,11 @@ backend/data/
 *.sqlite
 *.sqlite3
 
+# ---- 评测产物（scripts/eval.py 每次跑都会生成新文件）----
+# 黄金集本身（golden_qa.jsonl / golden_image.jsonl）与 badcases.md 要入库，
+# 只有带时间戳的报告不入库；需要留档时用 `git add -f <报告>` 强制加入。
+data/eval/report_*.json
+
 # ---- 日志 ----
 *.log
 logs/

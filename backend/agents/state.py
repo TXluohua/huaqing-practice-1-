@@ -140,6 +140,16 @@ class AgentState(TypedDict, total=False):
     #: 多轮上下文，元素形如 {"role": "user" 或 "assistant", "content": str}
     history: list[dict[str, Any]]
 
+    # ---- 输入补充（契约追加，2026-09：接入检索层过滤与培训模式所需）----
+    #: 设备型号，用于检索层元数据过滤（开发文档 4.3 retrieve）
+    device_model: str | None
+    #: 分类过滤：设备维护 / 工艺 / 标准
+    category: str | None
+    #: 回答模式：qa 问答 / training 培训分层讲解（FR-09）
+    answer_mode: str
+    #: 提问者角色，检索即鉴权（开发文档 1.4）；由 HTTP 层 X-User-Role 透传
+    user_role: str
+
     # ---- ingest_image（可选节点）----
     image_result: ImageExtraction | None
 
@@ -213,12 +223,19 @@ def make_initial_state(
     image_ids: list[str] | None = None,
     history: list[dict[str, Any]] | None = None,
     trace_id: str | None = None,
+    device_model: str | None = None,
+    category: str | None = None,
+    answer_mode: str = "qa",
+    user_role: str = "engineer",
 ) -> AgentState:
     """构造一次问答的初始状态（图的输入）。
 
     初始 status 取 NOT_COVERED（fail-closed）：
     在 verify 节点明确判定之前，任何答案都不得被视为可信。
     这符合开发文档 1.4 的「零幻觉优先」原则 —— 忘记赋值时默认拒答，而不是默认放行。
+
+    device_model / category / answer_mode / user_role 为 2026-09 追加的输入字段
+    （接口文档 §8 缺口①②），均有默认值，不影响既有调用方。
     """
 
     return AgentState(
@@ -228,6 +245,10 @@ def make_initial_state(
         question=question,
         image_ids=list(image_ids or []),
         history=list(history or []),
+        device_model=device_model,
+        category=category,
+        answer_mode=answer_mode,
+        user_role=user_role,
         image_result=None,
         queries=[],
         candidates=[],
