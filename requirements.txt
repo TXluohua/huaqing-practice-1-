@@ -1,0 +1,32 @@
+# 依赖版本固定（开发文档 5.3 技术选型 / 6.2 工程结构）
+# 安装：make install   或   .venv/bin/python -m pip install -r requirements.txt
+# Python 版本：3.10 ~ 3.12（当前验证环境 3.10.12）
+
+# ---- Agent 编排 ----
+langgraph==1.2.11
+langgraph-checkpoint==4.2.0
+langgraph-checkpoint-sqlite==3.1.1
+langchain-core==1.6.3
+
+# ---- 数据校验（state.py 的证据与引用结构）----
+pydantic==2.13.5
+
+# ---- 检查点落盘驱动（langgraph-checkpoint-sqlite 的异步后端）----
+aiosqlite==0.22.1
+
+# ---- 测试 ----
+pytest==9.1.1
+pytest-asyncio==1.4.0
+
+# ---------------------------------------------------------------------------
+# 开发文档 5.3 中尚未接入的组件，待对应模块实现后再启用并锁定版本：
+#   fastapi / uvicorn                    -> backend/main.py（HTTP + SSE）
+#   SQLAlchemy / PyMySQL                 -> backend/db.py（业务库 MySQL）
+#   langchain-community                  -> EnsembleRetriever（RRF 融合）
+#   langchain-chroma / chromadb          -> backend/rag/store.py（向量库）
+#   rank-bm25 / jieba                    -> backend/rag/retriever.py（词法检索）
+#   FlagEmbedding / sentence-transformers-> Cross-Encoder 精排
+#   PyMuPDF / MarkItDown                 -> backend/rag/ingest.py（文档解析）
+#   fastmcp / langchain-mcp-adapters     -> MCP 工单检索
+#   python-dotenv / pydantic-settings    -> backend/setting.py
+# ---------------------------------------------------------------------------
