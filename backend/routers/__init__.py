@@ -27,7 +27,7 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from ..agents.state import new_trace_id
-from ..schemas import ErrorBody
+from ..schemas import ErrorBody, ServiceError
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +110,11 @@ def register_error_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(ApiError)
     async def _handle_api_error(_: Request, exc: ApiError) -> JSONResponse:
+        return _error_response(exc.status_code, exc.code, exc.message, exc.detail)
+
+    @app.exception_handler(ServiceError)
+    async def _handle_service_error(_: Request, exc: ServiceError) -> JSONResponse:
+        # service 层用 ServiceError 表达业务错误（413 IMAGE_TOO_LARGE / 404 QA_NOT_FOUND 等）
         return _error_response(exc.status_code, exc.code, exc.message, exc.detail)
 
     @app.exception_handler(RequestValidationError)

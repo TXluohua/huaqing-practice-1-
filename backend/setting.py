@@ -161,6 +161,29 @@ class Settings(BaseSettings):
         "image": 0.5,
     }
 
+    # ------------------------------------ 受限 agent 与多模态（平台侧甲 追加）
+    # 2026-09 追加（augment / ingest_image 需要；全部为**新增字段**，
+    # 未改动上面任何既有字段，符合协作规范「只追加」约定）。
+    #: augment 硬边界（开发文档 4.3）：轮数 / 工具调用次数 / 超时（秒）
+    #: 由代码强制，不交给模型自觉 —— 调参改这里，不改代码（NFR-04）。
+    augment_max_rounds: int = 2
+    augment_max_tool_calls: int = 3
+    augment_timeout_s: float = 15.0
+    #: augment 允许调用的工具（与 tools/kb_tools.TOOL_WHITELIST 取交集后生效）
+    augment_tool_whitelist: list[str] = [
+        "kb_search_expand",
+        "kb_get_chunk",
+        "kb_stats",
+    ]
+    #: 图片识别最低置信度：低于此值视为「未能识别」，提示改用文字描述（FR-02 失败处理）
+    vision_min_confidence: float = 0.5
+    #: 单张图片 VLM 调用超时（秒）
+    vision_timeout_s: float = 30.0
+    #: 备件示例数据源（FR-10）。接真实 ERP/采购系统时替换该文件即可。
+    parts_inventory_path: Path = BACKEND_DIR / "config" / "parts_inventory.yaml"
+    #: 备件库存在低于该值时提示「库存紧张」
+    parts_low_stock: int = 5
+
     # ---------------------------------------------------------------- MCP
     mcp_ticket_server: str = str(BACKEND_DIR / "mcp_servers" / "ticket_server.py")
     mcp_enabled: bool = True

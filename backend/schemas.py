@@ -30,6 +30,29 @@ class ErrorBody(BaseModel):
     trace_id: str | None = None
 
 
+class ServiceError(Exception):
+    """service 层抛出的、带 HTTP 语义的业务错误。
+
+    为什么定义在这里：错误契约与 ErrorBody 是一回事，放在契约模块里可以让
+    routers 与 services **都** import 它，而不必让 services 反向 import routers
+    （开发文档 6.1 禁止反向依赖）。routers.register_error_handlers 会把它
+    渲染成与接口文档 §5 一致的错误体。
+    """
+
+    def __init__(
+        self,
+        status_code: int,
+        code: str,
+        message: str,
+        detail: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.code = code
+        self.message = message
+        self.detail = detail
+
+
 class ComponentHealth(BaseModel):
     """单个依赖组件的健康状态。"""
 
