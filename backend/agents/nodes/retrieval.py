@@ -36,16 +36,119 @@ def _elapsed(started: float, name: str) -> dict[str, float]:
     return {name: round((time.perf_counter() - started) * 1000, 2)}
 
 
-async def rewrite(state: AgentState) -> dict[str, Any]:
-    """问题 → 2~3 路检索式（术语归一 + 保留原始问题一路）。
+#: 指代词 / 上下文依赖标记：出现即认为这句话离开上文说不通
+_FOLLOWUP_MARKERS: tuple[str, ...] = (
+    "它", "他", "她", "该", "这个", "那个", "其", "此", "上述", "刚才", "上面",
+    "前面", "这些", "那些", "还有", "同样", "那", "呢", "再讲", "接着",
+)
 
-    图片识别结果（image_result）会作为一路补充检索式 —— 报警码这类强标识符
-    往往只出现在图片里（FR-02）。
+#: 短到什么程度可以认为「单独看不成句」（配合有上文即视为追问）
+_SHORT_QUESTION_LEN = 12
+
+
+def previous_user_questions(history: Any, *, limit: int = 1) -> list[str]:
+    """从历史里取最近的用户提问（旧 → 新）。
+
+    history 的形状由 services 层决定：`[{"role": "user"|"assistant", "content": str}, ...]`，
+    这里只认 user 轮 —— 上一轮的**回答**可能是拒答话术，拿它当检索式只会引入噪声。
+    """
+
+    questions: list[str] = []
+    for turn in reversed(list(history or [])):
+        if not isinstance(turn, dict):
+            continue
+        if str(turn.get("role") or "") != "user":
+            continue
+        content = str(turn.get("content") or "").strip()
+        if content:
+            questions.append(content)
+        if len(questions) >= limit:
+            break
+    return list(reversed(questions))
+
+
+def is_referential(question: str) -> bool:
+    """这句话是否「离开上文说不通」（含指代词，或短到不成句）。"""
+
+    stripped = (question or "").strip()
+    if any(marker in stripped for marker in _FOLLOWUP_MARKERS):
+        return True
+    return len(stripped) <= _SHORT_QUESTION_LEN
+
+
+def looks_like_followup(question: str, history: Any) -> bool:
+    """是否是需要靠上文补全的追问（确定性判据，不调用模型）。
+
+    两个条件满足其一即视为追问：
+      1. 句中出现指代词/上下文标记（它、该、上述、刚才……）；
+      2. 句子很短（<= 12 字）且存在上文 —— 单独看不成句。
+    """
+
+    if not previous_user_questions(history):
+        return False
+    return is_referential(question)
+
+
+def antecedent_question(history: Any, *, lookback: int = 5) -> str | None:
+    """最近一个**自足**（非指代）的用户提问 —— 追问的上文基准。
+
+    为什么要回溯：连续追问时，「最近一轮提问」本身可能也是指代句
+    （Q1 → 「你刚才说的第一步是什么？」→ 「那密封圈多久换一次？」）。
+    若拿中间那句指代句当上文，补全后的检索式里仍是指代词，
+    锚点校验依然会判「术语在知识库中不存在」而误拒（实测链式追问踩到过）。
+    """
+
+    questions = previous_user_questions(history, limit=lookback)  # 旧 → 新
+    if not questions:
+        return None
+    substantive = [q for q in questions if not is_referential(q)]
+    if substantive:
+        return substantive[-1]
+    # 全部都是指代句：退回最近一句，聊胜于无
+    return questions[-1]
+
+
+def queries_with_history(question: str, history: Any) -> list[str]:
+    """多轮追问的检索式补全（FR-01 追问 / FR-06 上文保持）。
+
+    为什么需要：检索式改写只看当前这句话时，「你刚才说的第一步是什么？」
+    这类指代句在知识库里一个字都命中不了 —— 实测会直接拒答。
+    这里把上一轮用户提问补进来（同时给出「上文 + 当前句」的合并式），
+    让检索能落到上一轮真正讨论的那一节；不引入模型，行为完全确定可测。
+    """
+
+    base = expand_queries(question)
+    if not looks_like_followup(question, history):
+        return base[:3]
+
+    prior = antecedent_question(history)
+    if not prior:
+        return base[:3]
+    merged = f"{prior} {question}".strip()
+    ordered = [merged, prior, *base]
+    unique: list[str] = []
+    for item in ordered:
+        if item and item not in unique:
+            unique.append(item)
+    return unique[:3]
+
+
+async def rewrite(state: AgentState) -> dict[str, Any]:
+    """问题 → 2~3 路检索式（术语归一 + 保留原始问题一路 + 多轮追问补全）。
+
+    1. 术语归一与关键词式改写：见 tools/kb_tools.expand_queries；
+    2. **多轮追问补全**：追问（含指代词或过短）会把上一轮用户提问补进检索式，
+       否则「你刚才说的第一步是什么？」这类句子在知识库里命中不了任何内容；
+    3. 图片识别结果（image_result）作为一路补充检索式 —— 报警码这类强标识符
+       往往只出现在图片里（FR-02）。
     """
 
     started = time.perf_counter()
     question = (state.get("question") or "").strip()
-    queries = expand_queries(question)
+    history = state.get("history") or []
+    queries = queries_with_history(question, history)
+    if looks_like_followup(question, history):
+        logger.debug("多轮追问：已用上文补全检索式（question=%r → queries=%s）", question, queries)
 
     image_result = state.get("image_result")
     if image_result is not None:
@@ -221,7 +324,12 @@ register_node(NodeName.RERANK, rerank)
 register_node(NodeName.BUILD_CONTEXT, build_context)
 
 __all__ = [
+    "antecedent_question",
     "build_context",
+    "is_referential",
+    "looks_like_followup",
+    "previous_user_questions",
+    "queries_with_history",
     "normalized_top_score",
     "rerank_provider",
     "sufficiency_threshold",

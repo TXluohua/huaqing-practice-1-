@@ -17,6 +17,12 @@ if str(ROOT) not in sys.path:
 
 from backend.agents.state import Evidence  # noqa: E402
 from backend.rag.ingest import Chunk  # noqa: E402
+from backend.agents.nodes.retrieval import (  # noqa: E402
+    antecedent_question,
+    looks_like_followup,
+    previous_user_questions,
+    queries_with_history,
+)
 from backend.rag.retriever import (  # noqa: E402
     BM25Index,
     HybridRetriever,
@@ -202,6 +208,80 @@ def test_is_evidence_sufficient_uses_absolute_score() -> None:
     assert is_evidence_sufficient(0.9, items, threshold=0.5) is True
     assert is_evidence_sufficient(0.2, items, threshold=0.5) is False
     assert is_evidence_sufficient(0.9, [], threshold=0.5) is False
+
+
+# --------------------------------------------------------------------------- #
+# 多轮追问：检索式补全（FR-01 追问 / FR-06 上文保持）
+# --------------------------------------------------------------------------- #
+HISTORY = [
+    {"role": "user", "content": "刻蚀机腔体真空度异常怎么排查？"},
+    {"role": "assistant", "content": "1. 检查腔体密封 O-ring [1]。"},
+]
+
+
+def test_previous_user_questions_ignores_assistant_turns() -> None:
+    """只认用户提问：上一轮回答可能是拒答话术，拿它当检索式只会引入噪声。"""
+
+    assert previous_user_questions(HISTORY) == ["刻蚀机腔体真空度异常怎么排查？"]
+    assert previous_user_questions([]) == []
+
+
+def test_followup_detection() -> None:
+    # 指代词 / 上下文标记 → 判为追问
+    assert looks_like_followup("你刚才说的第一步是什么？", HISTORY) is True
+    assert looks_like_followup("那它的更换周期是多少？", HISTORY) is True
+    # 很短且存在上文 → 判为追问
+    assert looks_like_followup("多久换一次？", HISTORY) is True
+    # 自足问题 → 不是追问（不会把无关上文掺进检索式）
+    assert looks_like_followup("刻蚀机腔体真空度异常怎么排查？", HISTORY) is False
+    assert looks_like_followup("CVD 沉积温度窗口是多少？", HISTORY) is False
+    # 没有上文 → 永远不是追问
+    assert looks_like_followup("那它呢？", []) is False
+
+
+def test_queries_with_history_includes_antecedent() -> None:
+    """追问的检索式必须补进上一轮提问，否则指代句在知识库里一个词都命中不了。"""
+
+    queries = queries_with_history("你刚才说的第一步是什么？", HISTORY)
+    assert len(queries) <= 3
+    assert any("刻蚀机腔体真空度异常怎么排查" in q for q in queries), queries
+    # 原始追问本身仍然保留一路，避免补全引入偏差
+    assert any("第一步" in q for q in queries), queries
+
+
+def test_chained_followup_looks_back_to_substantive_question() -> None:
+    """连续追问时，上文基准要回溯到最近一个「自足」提问。
+
+    否则 Q1 →「你刚才说的第一步是什么？」→「那密封圈多久换一次？」这条链上，
+    第二个追问会拿中间那句指代句当上文，补全后检索式里仍是指代词，
+    锚点校验会判「术语在知识库中不存在」而误拒（实测链式追问踩到过）。
+    """
+
+    chained = HISTORY + [
+        {"role": "user", "content": "你刚才说的第一步是什么？"},
+        {"role": "assistant", "content": "1. 检查腔体密封 O-ring [3]。"},
+    ]
+    assert antecedent_question(chained) == "刻蚀机腔体真空度异常怎么排查？"
+
+    queries = queries_with_history("那密封圈多久换一次？", chained)
+    assert any("刻蚀机腔体真空度异常怎么排查" in q for q in queries), queries
+    assert not any("你刚才说的第一步" in q for q in queries), "不应把指代句当上文基准"
+
+
+def test_antecedent_falls_back_when_all_turns_referential() -> None:
+    only_referential = [
+        {"role": "user", "content": "那它呢？"},
+        {"role": "assistant", "content": "…"},
+    ]
+    assert antecedent_question(only_referential) == "那它呢？"
+
+
+def test_queries_without_history_unchanged() -> None:
+    """非追问/无上文的检索式不应被改写逻辑改动（原行为保持不变）。"""
+
+    plain = queries_with_history("刻蚀机腔体真空度异常怎么排查？", HISTORY)
+    assert plain[0] == "刻蚀机腔体真空度异常怎么排查？"
+    assert queries_with_history("那它呢？", [])[0] == "那它呢？"
 
 
 if __name__ == "__main__":  # pragma: no cover - 无 pytest 时的兜底运行入口
