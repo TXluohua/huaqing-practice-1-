@@ -33,6 +33,10 @@ class WarmupReport:
     chunks: int = 0
     reranker: str | None = None
     db_ready: bool = False
+    #: 已注册的 MCP 工具名（工单检索）；空表示已降级
+    mcp_tools: list[str] = field(default_factory=list)
+    #: 工具注册表总数（本地 + MCP）
+    tool_count: int = 0
     elapsed_ms: float = 0.0
     problems: list[str] = field(default_factory=list)
 
@@ -49,6 +53,8 @@ class WarmupReport:
             "chunks": self.chunks,
             "reranker": self.reranker,
             "db_ready": self.db_ready,
+            "mcp_tools": list(self.mcp_tools),
+            "tool_count": self.tool_count,
             "elapsed_ms": self.elapsed_ms,
             "problems": list(self.problems),
             "ok": self.ok,
@@ -114,6 +120,20 @@ async def warm_up() -> WarmupReport:
     except Exception as exc:  # noqa: BLE001
         report.problems.append(f"精排器预热失败：{exc}")
         logger.warning("精排器预热失败：%s", exc)
+
+    # ---- 5) MCP 工具（工单检索）：加载失败降级为空工具，绝不影响启动（R7）----
+    try:
+        from .tools import load_all_tools, mcp_status, registered_names
+
+        await load_all_tools()
+        status = mcp_status()
+        report.mcp_tools = list(status.get("registered") or [])
+        report.tool_count = len(registered_names())
+        if not status.get("ok"):
+            report.problems.append(f"MCP 未就绪（已降级）：{status.get('detail')}")
+    except Exception as exc:  # noqa: BLE001 - 双保险
+        report.problems.append(f"MCP 工具加载异常（已降级）：{exc}")
+        logger.warning("MCP 工具加载异常：%s", exc)
 
     report.elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
     warmup = report

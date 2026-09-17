@@ -1,0 +1,88 @@
+# 历史工单样例数据（FR-03 跨源检索的「工单源」）
+#
+# 用途：ticket_search MCP 工具的数据源。本文件是**示例数据**，
+#       接真实工单系统（CMMS / 服务工单库）时替换本文件或改 ticket_server.py 的取数实现即可。
+#
+# 为什么用 MCP 承载（开发文档 4.4.3 判断标准）：
+#   历史工单属**系统边界**——接口按 MCP 定义后，未来换成真实工单系统不影响上层。
+#
+# 字段说明：
+#   ticket_no   工单号
+#   device_model 设备型号
+#   symptom     故障现象（检索主字段）
+#   root_cause  根因
+#   action      处置措施
+#   parts_used  涉及备件（编码对应 config/parts_inventory.yaml）
+#   conclusion  结论/经验
+#   date        工单日期
+#   related_doc 关联手册章节（便于与文档源交叉验证）
+
+updated_at: "2026-09-15"
+source_note: 示例数据，非真实工单
+
+tickets:
+  - ticket_no: TK-2026-0431
+    device_model: Etcher-A
+    symptom: 腔体真空度异常波动，本底压力从 2.0e-4 Pa 上漂到 8.0e-4 Pa
+    root_cause: 腔体门 O-ring 老化硬化，密封面出现细微泄漏
+    action: 停机更换腔体门 O-ring（SP-ETA-0101），密封面涂抹真空硅脂，按对角顺序分 3 次拧紧至 25 N·m
+    parts_used: [SP-ETA-0101]
+    conclusion: 送厂检漏确认为 O-ring 泄漏；更换后本底压力恢复至 1.5e-4 Pa。同型号设备使用满 3 个月的 O-ring 建议预防性更换
+    date: "2026-03-18"
+    related_doc: 刻蚀设备维护手册#3.4
+    down_time_min: 95
+
+  - ticket_no: TK-2026-0512
+    device_model: Etcher-A
+    symptom: 真空度波动同时伴随抽气时间变长，从常压抽至 1.0 Pa 超过 180 s
+    root_cause: 干泵 DP-600 排气过滤器堵塞，抽速下降
+    action: 更换干泵排气过滤器（SP-ETA-0210，型号 FL-600），同步检查消音器
+    parts_used: [SP-ETA-0210]
+    conclusion: 抽气时间与过滤器状态强相关；建议按 4000 运行小时周期更换，不要等到报警
+    date: "2026-04-02"
+    related_doc: 刻蚀设备维护手册#2.1
+    down_time_min: 140
+
+  - ticket_no: TK-2026-0567
+    device_model: CVD-200
+    symptom: 薄膜厚度均匀性变差，片内极差超过 8%
+    root_cause: 腔体温度分布不均，加热器分区温控偏差超 10 ℃
+    action: 重新标定加热器分区温控，校准后复测均匀性
+    parts_used: []
+    conclusion: 均匀性劣化优先查温控而非气体流量；标定后极差回到 3% 以内
+    date: "2026-04-21"
+    related_doc: CVD 薄膜沉积工艺规范#2.1
+    down_time_min: 220
+
+  - ticket_no: TK-2026-0603
+    device_model: Etcher-A
+    symptom: 报警 E-2041（腔体压力超限），复位后短时间再次触发
+    root_cause: 压力传感器零点漂移，实际压力正常
+    action: 对压力传感器做零点标定，标定后连续观察 4 小时无复现
+    parts_used: []
+    conclusion: E-2041 反复触发且真空度无实际异常时，优先怀疑传感器零点漂移而非真实泄漏
+    date: "2026-05-09"
+    related_doc: 刻蚀设备维护手册#5.2
+    down_time_min: 60
+
+  - ticket_no: TK-2026-0688
+    device_model: Cleaner-C
+    symptom: 清洗后颗粒残留超标，超标集中在片边缘
+    root_cause: 清洗液喷淋臂喷嘴部分堵塞，边缘覆盖不足
+    action: 拆解喷淋臂清洗喷嘴，更换滤芯
+    parts_used: []
+    conclusion: 颗粒残留若集中在边缘，先查喷淋覆盖均匀性；喷嘴堵塞是最常见原因
+    date: "2026-05-27"
+    related_doc: 清洗设备操作与维护指南#3.2
+    down_time_min: 110
+
+  - ticket_no: TK-2026-0741
+    device_model: Etcher-A
+    symptom: 真空度跳变，同时气体流量控制不稳，MFC 设定值与反馈值有偏差
+    root_cause: 气体管路 O-ring 微漏，导致腔体压力与流量耦合波动
+    action: 更换气体管路 O-ring（SP-ETA-0102），紧固接头并做保压测试
+    parts_used: [SP-ETA-0102]
+    conclusion: 真空与流量同时异常时，先排查气体管路密封件，不要只盯真空侧
+    date: "2026-06-15"
+    related_doc: 刻蚀设备维护手册#3.4
+    down_time_min: 85

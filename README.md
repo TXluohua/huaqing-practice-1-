@@ -10,20 +10,33 @@
 ## 当前状态
 
 **端到端已跑通**：LangGraph 九节点主链路 + RAG 检索生成 + FastAPI 接口层 + Vue3 前端。
+**单测 84 passed；后端端到端 58 项断言全过。**
 
 | 层 | 状态 | 位置 |
 | --- | --- | --- |
 | 状态契约 | ✅ | `backend/agents/state.py` |
 | 主图（9 节点 + 条件边） | ✅ | `backend/agents/graph.py`、`backend/agents/nodes/` |
 | 检索与生成（RAG） | ✅ | `backend/rag/`、`backend/tools/kb_tools.py` |
-| 接口层（10 个接口 + SSE） | ✅ | `backend/routers/` |
+| 跨源检索（MCP 工单） | ✅ | `backend/mcp_servers/ticket_server.py`、`backend/mcp_client.py` |
+| 接口层（11 个接口 + SSE） | ✅ | `backend/routers/` |
 | 服务层 | ✅ | `backend/services/{chat_service,kb_service}.py` |
 | 业务库与会话检查点 | ✅ | `backend/db.py`（业务）、`backend/memory.py`（检查点） |
 | 应用入口与预热 | ✅ | `backend/main.py`、`backend/dependency.py` |
+| 部署产物 | ✅ | `deploy/`、`docker-compose.yml`（nginx 已关 SSE 缓冲） |
 | 前端 | ✅ | `frontend/`（Vue3 + Vite + Element Plus） |
 
-**尚未接入**：MCP 工单检索（D7）、图片知识侧入库、docx/pptx/xlsx 解析（需 MarkItDown）、
-生产部署（`deploy/`、`docker-compose.yml`）。
+**尚未完成**：图片知识侧入库（抽图无 VLM caption）、docx/pptx/xlsx 解析（需 MarkItDown）、
+检索层权限过滤规则（缺权限分级表）、黄金集扩样与正式评测报告。
+
+> 逐项完成度与实测证据见 **`功能完成度清单.md`**。
+
+---
+
+## 快速开始
+
+> **密钥**：若 `DEEPSEEK_API_KEY` / `DASHSCOPE_API_KEY` 写在 `~/.bashrc`，
+> 注意非交互 shell 读不到，需用 `bash -ic 'make dev'` 启动。
+> （`.env` 中的环境变量优先级低于系统环境变量，两者可共存。）
 
 ---
 
@@ -75,7 +88,7 @@ cp .env.example .env
 ## 常用命令
 
 ```bash
-make test                                  # 全量测试（48 个用例）
+make test                                  # 全量测试（84 个用例）
 make ask Q="刻蚀机腔体真空度异常怎么排查？"   # 命令行单问
 make ask-stream Q="参数下限是多少"           # 流式链路
 make clean                                 # 清理字节码与测试缓存

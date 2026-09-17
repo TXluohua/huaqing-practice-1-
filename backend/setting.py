@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     app_name: str = "半导体设备维护知识库智能问答系统"
     app_version: str = "0.1.0"
     debug: bool = True
+    #: 日志级别（NFR-03）。**与 debug 解耦**：debug 只控制 Swagger 是否开放，
+    #: 日志级别单独配置。默认 INFO —— 设成 DEBUG 时 LangGraph 会把整个检查点
+    #: 状态（含大段二进制 repr）打进日志，单次问答上万行，日常不要开。
+    log_level: str = "INFO"
     api_prefix: str = "/api"
     #: 前端开发服务器（Vite）跨域白名单
     cors_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
@@ -169,11 +173,43 @@ class Settings(BaseSettings):
     augment_max_rounds: int = 2
     augment_max_tool_calls: int = 3
     augment_timeout_s: float = 15.0
-    #: augment 允许调用的工具（与 tools/kb_tools.TOOL_WHITELIST 取交集后生效）
+    #: augment 允许调用的工具（与 tools/__init__.py 注册表取交集后生效）
+    #: 三个补检索工具 + 工单检索（MCP，FR-03 跨源）+ 备件查询（FR-10）
     augment_tool_whitelist: list[str] = [
         "kb_search_expand",
         "kb_get_chunk",
         "kb_stats",
+        "ticket_search",
+        "parts_query",
+    ]
+    #: 触发备件查询的问题关键词（FR-10）：命中即调用 parts_query，结果作为证据进上下文
+    parts_question_keywords: list[str] = [
+        "库存",
+        "备件",
+        "配件",
+        "替代",
+        "替换件",
+        "到货",
+        "交期",
+        "缺货",
+        "有货",
+        "订货",
+        "采购",
+        "询价",
+        "料号",
+        "sp-eta",
+    ]
+    #: 触发工单检索的问题关键词（FR-03 跨源）：命中即查历史工单案例
+    ticket_question_keywords: list[str] = [
+        "工单",
+        "案例",
+        "以前",
+        "历史",
+        "处置",
+        "怎么处理",
+        "发生过",
+        "经验",
+        "类似",
     ]
     #: 图片识别最低置信度：低于此值视为「未能识别」，提示改用文字描述（FR-02 失败处理）
     vision_min_confidence: float = 0.5
@@ -187,6 +223,12 @@ class Settings(BaseSettings):
     # ---------------------------------------------------------------- MCP
     mcp_ticket_server: str = str(BACKEND_DIR / "mcp_servers" / "ticket_server.py")
     mcp_enabled: bool = True
+    #: MCP 工具加载超时（秒）：server 起不来时必须能及时放弃，不能卡住应用启动
+    mcp_load_timeout_s: float = 20.0
+    #: 工单数据源（FR-03 跨源检索的「工单源」）。接真实工单系统时替换该文件即可。
+    tickets_path: Path = BACKEND_DIR / "config" / "tickets.yaml"
+    #: 高频问题统计：低于该次数不进 Top 榜（FR-09）
+    frequent_question_min_count: int = 1
 
     # ---------------------------------------------------------------- 方法
     def ensure_dirs(self) -> None:

@@ -33,6 +33,14 @@ rank-bm25==0.2.2
 pypdf==6.16.1
 chromadb==1.5.9
 
+# ---- MCP：工单检索（FR-03 跨源；开发文档 5.3 规定 fastmcp + langchain-mcp-adapters）----
+# 版本必须**成套锁定**：fastmcp 4.x 需要 mcp>=2，而 langchain-mcp-adapters 0.3.x 需要 mcp<2，
+# 混装会出现 ImportError（RequestContext / IdentityAssertionParams）。
+# 以下组合已实测可用。
+fastmcp==2.14.7
+langchain-mcp-adapters==0.3.2
+mcp==1.30.0
+
 # ---- 测试 ----
 pytest==9.1.1
 pytest-asyncio==1.4.0

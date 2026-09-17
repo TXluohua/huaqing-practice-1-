@@ -25,6 +25,7 @@ import time
 from typing import Any
 
 from ...setting import get_settings
+from ...tools import needs_external_lookup
 from ...tools.kb_tools import expand_queries, get_retriever
 from ..state import AgentState
 from . import NodeName, register_node
@@ -206,6 +207,13 @@ def should_augment(state: AgentState) -> str:
     calls = int(state.get("tool_calls") or 0)
     enough = bool(state.get("evidence_sufficient"))
     normalized = normalized_top_score(state)
+
+    # 平台侧（甲）2026-09 追加：备件库存台账与历史工单**都不在知识库文档里**，
+    # 这类问题即使文档证据充分也必须走 augment 去查外部数据源（FR-10 / FR-03），
+    # 否则「跨源检索」实际只会命中文档这一源。硬边界优先，到边界后不再补检索。
+    if rounds < 2 and calls < 3 and needs_external_lookup(state.get("question")):
+        return NodeName.AUGMENT
+
     if enough or normalized >= sufficiency_threshold(state):
         return NodeName.GENERATE
     if rounds >= 2 or calls >= 3:

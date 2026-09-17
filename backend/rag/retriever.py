@@ -745,6 +745,17 @@ def build_context(
     return "\n\n".join(lines), kept
 
 
+#: 允许出现在引用里的来源类型（与 agents/state.py 的 SourceType 一致）
+_CITATION_SOURCE_TYPES = ("kb_doc", "ticket", "image")
+
+
+def _source_type_of(meta: dict[str, Any]) -> str:
+    """从证据元数据里取来源类型，非法值一律回落到 kb_doc。"""
+
+    value = str(meta.get("source_type") or "kb_doc")
+    return value if value in _CITATION_SOURCE_TYPES else "kb_doc"
+
+
 def evidence_to_citations(items: Sequence[Evidence]) -> list[Citation]:
     """把上下文块转成引用项（编号由代码分配，禁止模型编造）。"""
 
@@ -754,7 +765,11 @@ def evidence_to_citations(items: Sequence[Evidence]) -> list[Citation]:
         citations.append(
             Citation(
                 id=index,
-                source_type="image" if meta.get("source_type") == "image" else "kb_doc",
+                # 来源类型由 metadata 显式声明（kb_doc / ticket / image）。
+                # 前端 CitationCard 按 source_type 切换渲染分支：工单填成 kb_doc 会被显示成手册文档。
+                # 平台侧（甲）2026-09 追加：原实现只认 image，其余一律 kb_doc，
+                # 导致 FR-03 的跨源工单引用无法与文档区分。改为通用透传，默认值不变。
+                source_type=_source_type_of(meta),
                 doc=str(meta.get("doc_title") or "") or None,
                 version=str(meta.get("version") or "") or None,
                 section=str(meta.get("section") or "") or None,

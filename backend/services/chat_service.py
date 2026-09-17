@@ -45,7 +45,8 @@ from ..schemas import (
     TokenEvent,
 )
 from ..setting import get_settings
-from ..utils.text import make_title, mask_secrets, now_iso, to_iso
+from ..schemas import FrequentQuestionItem
+from ..utils.text import make_title, mask_secrets, normalize_question, now_iso, to_iso
 
 logger = logging.getLogger(__name__)
 
@@ -305,10 +306,36 @@ async def _persist_qa(
             if row is not None:
                 row.updated_at = datetime.now(timezone.utc)  # 会话列表按此排序
                 session.add(row)
+
+            await _bump_question_stat(session, payload.question)
         return qa_id
     except Exception as exc:  # noqa: BLE001
         logger.warning("问答落库失败（不影响回答）：%s", exc)
         return None
+
+
+async def _bump_question_stat(session: Any, question: str) -> None:
+    """高频问题计数（FR-09）：同一问题的不同标点/空格写法归并到同一条。"""
+
+    key = normalize_question(question)
+    if not key:
+        return
+    now = datetime.now(timezone.utc)
+    row = await session.get(db.QuestionStat, key)
+    if row is None:
+        session.add(
+            db.QuestionStat(
+                question_key=key,
+                sample_question=(question or "").strip()[:500],
+                ask_count=1,
+                first_asked_at=now,
+                last_asked_at=now,
+            )
+        )
+    else:
+        row.ask_count = int(row.ask_count or 0) + 1
+        row.last_asked_at = now
+        session.add(row)
 
 
 # --------------------------------------------------------------------------- #
@@ -519,6 +546,39 @@ async def add_feedback(
     return result
 
 
+async def top_questions(
+    *,
+    limit: int = 20,
+    min_count: int = 1,
+) -> list[FrequentQuestionItem]:
+    """高频问题榜（FR-09）：被问得最多的 N 个问题，用于反推培训内容与知识补充。"""
+
+    _require_db()
+
+    async with db.session_scope() as session:
+        stmt = (
+            select(db.QuestionStat)
+            .where(db.QuestionStat.ask_count >= min_count)
+            .order_by(
+                db.QuestionStat.ask_count.desc(),
+                db.QuestionStat.last_asked_at.desc(),
+            )
+            .limit(limit)
+        )
+        rows = list((await session.execute(stmt)).scalars())
+
+    return [
+        FrequentQuestionItem(
+            question=row.sample_question,
+            question_key=row.question_key,
+            ask_count=int(row.ask_count or 0),
+            first_asked_at=to_iso(row.first_asked_at),
+            last_asked_at=to_iso(row.last_asked_at),
+        )
+        for row in rows
+    ]
+
+
 __all__ = [
     "FeedbackRecord",
     "SessionRef",
@@ -527,4 +587,5 @@ __all__ = [
     "list_sessions",
     "sse",
     "stream_answer",
+    "top_questions",
 ]
