@@ -142,12 +142,21 @@ async def ainvoke(
     image_ids: list[str] | None = None,
     history: list[dict[str, Any]] | None = None,
     thread_id: str | None = None,
+    trace_id: str | None = None,
+    device_model: str | None = None,
+    category: str | None = None,
+    answer_mode: str = "qa",
+    user_role: str = "engineer",
     config: dict[str, Any] | None = None,
 ) -> AgentState:
     """跑一次问答链路（阻塞式等待完整结果）。
 
     session_id 与 thread_id 的对应关系由 memory.session_registry 维护，
     同一 session_id 复用同一 thread_id，从而命中同一份会话检查点。
+
+    trace_id / device_model / category / answer_mode / user_role 为接口层透传字段
+    （对应接口文档 §8 缺口①②）：trace_id 让 SSE 的 meta 事件与图内状态同源，
+    其余三个进入检索过滤与提示词选择。均有默认值，不影响既有调用方。
     """
 
     agent = await get_agent()
@@ -161,6 +170,11 @@ async def ainvoke(
         thread_id=resolved_thread,
         image_ids=image_ids,
         history=history,
+        trace_id=trace_id,
+        device_model=device_model,
+        category=category,
+        answer_mode=answer_mode,
+        user_role=user_role,
     )
 
     started = time.perf_counter()
@@ -184,13 +198,16 @@ async def astream(
     history: list[dict[str, Any]] | None = None,
     thread_id: str | None = None,
     stream_mode: str = "values",
+    trace_id: str | None = None,
+    device_model: str | None = None,
+    category: str | None = None,
+    answer_mode: str = "qa",
+    user_role: str = "engineer",
 ) -> AsyncIterator[Any]:
     """流式跑一次问答链路，供 SSE 接口消费。
 
-    stream_mode="values" 时每个 chunk 是完整状态；
-    骨架阶段（零节点）至少会产出一次状态，链路可被端到端验证。
-    节点接入后若需要逐 token 输出，改用 LangGraph 的 custom 流
-    （节点内 get_stream_writer）或 messages 模式。
+    stream_mode="values" 时每个 chunk 是**完整状态**（不是增量），
+    chat_service 据此按字段取值做 SSE 事件映射。
     """
 
     agent = await get_agent()
@@ -203,6 +220,11 @@ async def astream(
         thread_id=resolved_thread,
         image_ids=image_ids,
         history=history,
+        trace_id=trace_id,
+        device_model=device_model,
+        category=category,
+        answer_mode=answer_mode,
+        user_role=user_role,
     )
 
     async for chunk in agent.astream(

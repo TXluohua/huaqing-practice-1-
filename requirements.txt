@@ -8,55 +8,41 @@ langgraph-checkpoint==4.2.0
 langgraph-checkpoint-sqlite==3.1.1
 langchain-core==1.6.3
 
-# ---- 数据校验（state.py 的证据与引用结构）----
+# ---- 数据校验与配置 ----
 pydantic==2.13.5
+pydantic-settings==2.15.0
+python-dotenv==1.2.3
 
-# ---- 检查点落盘驱动（langgraph-checkpoint-sqlite 的异步后端）----
+# ---- Web 层：FastAPI + SSE + 表单上传 + 静态资源 ----
+fastapi==0.141.1
+uvicorn[standard]==0.53.0
+python-multipart==0.0.32
+httpx==0.28.1
+
+# ---- 业务库（开发期 SQLite；生产换 MySQL 时加 aiomysql 并改 DATABASE_URL）----
+sqlalchemy==2.0.53
 aiosqlite==0.22.1
+
+# ---- 图片预处理（上传校验 / 压缩 / 取尺寸）----
+pillow==12.3.0
+
+# ---- RAG：检索与入库 ----
+numpy>=1.26
+jieba==0.42.1
+rank-bm25==0.2.2
+pypdf==6.16.1
+chromadb==1.5.9
 
 # ---- 测试 ----
 pytest==9.1.1
 pytest-asyncio==1.4.0
 
-# ---- 配置与 HTTP（backend/setting.py；RAG 侧调模型/接口也需要）----
-pydantic-settings==2.15.0
-python-dotenv==1.2.3
-httpx==0.28.1
-
-# ---- RAG 检索链路（2026-09 接入；词法与向量检索、文档解析）----
-# 中文必须分词，否则 BM25 关键词检索失效（开发文档 5.3 / 风险 R5）
-jieba==0.42.1
-rank-bm25==0.2.2
-# 文档解析（md/txt 由内置解析器处理，pdf 走 pypdf；docx 等仍待接 MarkItDown）
-pypdf==6.16.1
-# 向量库（backend/rag/store.py 唯一出口）。
-# 注意：rag/store.py 在 chromadb 不可用时会自动降级为内置 simple 后端
-# （jsonl + numpy），因此这一条缺失也不会导致链路不可用。
-chromadb==1.5.9
-
-# ---- 语义向量化与精排：**本地 HuggingFace 模型**（不调用云端 API）----
-# 默认 EMBEDDING_PROVIDER=local：向量化用项目内模型 BAAI/bge-large-zh-v1.5（1024 维，
-# 与开发文档 5.3 的 bge-m3 同维度），精排用 BAAI/bge-reranker-v2-m3。
-# 模型放在 backend/data/models（HF_HOME 指向此处，不入库，约 4.6 GB），准备命令：
-#   .venv/bin/python scripts/prepare_model.py --check                       # 自检
-#   .venv/bin/python scripts/prepare_model.py --copy-from-cache             # 用本机 HF 缓存
-#   .venv/bin/python scripts/prepare_model.py --download --source modelscope --with-reranker
-# 未安装 sentence-transformers 或模型缺失时：provider=local 会**直接报错并给出修复指引**
-# （不静默降级、不调用云端接口）；provider=auto 才降级为 Ollama/hashing 兜底。
-# 体积较大故不固定版本，按需本地安装：
-# sentence-transformers==6.0.0   # 需要 torch（约 2GB+）
-# numpy==2.2.6
-# 下载模型所需的客户端（仅准备模型时需要，运行时不需要）：
-# huggingface_hub                # 随 sentence-transformers 一起装
-# modelscope                     # HF 镜像大文件跳转 401 时的替代下载源
-
 # ---------------------------------------------------------------------------
-# 开发文档 5.3 中尚未接入的组件，待对应模块实现后再启用并锁定版本：
-#   uvicorn                              -> backend/main.py（HTTP + SSE）
-#   SQLAlchemy / PyMySQL / aiosqlite     -> backend/db.py（业务库 MySQL）
-#   langchain-community                  -> EnsembleRetriever（本实现自写 RRF，未引入）
-#   FlagEmbedding / sentence-transformers-> Cross-Encoder 精排（bge-reranker-v2-m3）
-#   PyMuPDF / MarkItDown                 -> 扫描件/office 文档解析
-#   fastmcp / langchain-mcp-adapters     -> MCP 工单检索
-# 已接入的组件见上方 RAG 段。
+# 仍未启用的组件（对应模块尚未实现），需要时再装并锁定版本：
+#   FlagEmbedding / sentence-transformers -> 本地 embedding 与 Cross-Encoder 精排
+#       （EMBEDDING_PROVIDER=local / RERANK_PROVIDER=cross-encoder 时需要；
+#        不装则走 hashing + lexical 兜底，检索质量下降但有告警）
+#   fastmcp / langchain-mcp-adapters     -> MCP 工单检索（D7）
+#   aiomysql                             -> 生产 MySQL（DATABASE_URL=mysql+aiomysql://...）
+#   MarkItDown                           -> docx / pptx / xlsx 解析（开发文档 5.2.1）
 # ---------------------------------------------------------------------------

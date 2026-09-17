@@ -1,0 +1,77 @@
+# 备件库存示例数据（FR-10）
+#
+# 用途：把备件查询工具与链路的 FR-10 分支跑通。本文件是**示例数据**，
+#       接真实 ERP / 采购 / 库存系统时整体替换本文件即可（工具代码不用改）。
+#
+# 约束（开发文档 4.2 / FR-10，零幻觉）：
+#   - 替代件必须附 basis（兼容性依据）；**没有依据的替代件不要写进来**，
+#     parts_query 会把缺依据的条目降级为「需原厂确认」而不推荐；
+#   - 依据统一引用《备件目录与替代件说明》(data/raw/parts_catalog.md) 的条款；
+#   - 本工具只产出询价单**草稿**，不自动下单、不做价格谈判。
+
+updated_at: "2026-09-15"
+source_note: 示例数据，非真实库存
+
+items:
+  - part: 腔体门 O-ring
+    code: SP-ETA-0101
+    device_model: Etcher-A
+    spec: FKM，硬度 70 Shore A，内径 320 mm × 线径 5.33 mm
+    stock: 12
+    unit: 个
+    location: 备件库 A-03
+    lead_time_days: 3
+    substitutes:
+      - part: 腔体门 O-ring（FFKM 全氟醚）
+        code: SP-ETA-0101F
+        stock: 4
+        unit: 个
+        lead_time_days: 7
+        requires_approval: true
+        basis: 备件目录 V1.4 §1.2：允许 FFKM 全氟醚橡胶替代 FKM，耐温上限提升至 300 ℃，须经设备工程师确认
+    forbidden:
+      - part: NBR 丁腈橡胶 O-ring
+        reason: 备件目录 V1.4 §1.2：耐温上限仅 100 ℃ 且耐等离子腐蚀性能差，禁止用于替代 FKM
+
+  - part: 气体管路 O-ring
+    code: SP-ETA-0102
+    device_model: Etcher-A
+    spec: FKM 氟橡胶，硬度 75 Shore A，内径 12 mm × 线径 2.62 mm
+    stock: 40
+    unit: 个
+    location: 备件库 A-04
+    lead_time_days: 2
+    substitutes: []
+    forbidden:
+      - part: NBR 丁腈橡胶 O-ring
+        reason: 备件目录 V1.4 §1.2：耐温上限仅 100 ℃，禁止替代 FKM
+
+  - part: 干泵排气过滤器
+    code: SP-ETA-0210
+    device_model: Etcher-A
+    spec: 型号 FL-600，适配 DP-600 干泵
+    stock: 3
+    unit: 个
+    location: 备件库 B-01
+    lead_time_days: 14
+    substitutes: []
+
+  - part: 真空泵油
+    code: SP-ETA-0220
+    device_model: Etcher-A
+    spec: VG100 合成真空泵油，1 L/瓶，单次换油量 1.2 L
+    stock: 18
+    unit: 瓶
+    location: 备件库 B-02
+    lead_time_days: 5
+    substitutes: []
+
+  - part: 罗茨泵 RP-300 密封组件
+    code: SP-ETA-0310
+    device_model: Etcher-A
+    spec: 适配 RP-300 罗茨泵
+    stock: 0
+    unit: 套
+    location: 备件库 B-05
+    lead_time_days: 30
+    substitutes: []

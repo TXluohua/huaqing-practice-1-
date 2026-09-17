@@ -96,18 +96,50 @@ async def health(verbose: bool = Query(default=False, description="返回组件�
         "detail": settings.vlm_model if settings.dashscope_api_key else "DASHSCOPE_API_KEY 未配置",
     }
 
-    # ---- 依赖 service 层的组件：未实现时明确标记，不伪装成健康 ----
-    for name, module, purpose in (
-        ("vector_store", "kb_service", "向量库"),
-        ("mcp", "kb_service", "MCP 工单检索"),
-    ):
-        try:
-            from . import _load_service
+    # ---- 业务数据库 ----
+    try:
+        from .. import db
 
-            _load_service(module, purpose)
-            components[name] = {"ok": False, "detail": "service 已实现但未提供健康探测"}
-        except ApiError:
-            components[name] = {"ok": False, "detail": f"尚未接入（{module} 未实现）"}
+        db_health = await db.check_health()
+        components["database"] = {
+            "ok": bool(db_health.get("ok")),
+            "detail": db_health.get("detail") or "",
+        }
+    except Exception as exc:  # noqa: BLE001
+        components["database"] = {"ok": False, "detail": f"数据库探测异常：{exc}"}
+
+    # ---- 向量库（真实探测：切片数 / provider / backend）----
+    try:
+        from ..rag.store import get_store
+
+        store = await get_store()
+        stats = await store.stats()
+        n_chunks = int(stats.get("n_chunks") or 0)
+        components["vector_store"] = {
+            "ok": n_chunks > 0,
+            "detail": f"{stats.get('provider')}/{stats.get('backend')} · {n_chunks} 切片 · {stats.get('n_documents')} 文档"
+            if n_chunks
+            else "索引为空，请先运行 scripts/ingest.py --rebuild",
+        }
+    except Exception as exc:  # noqa: BLE001
+        components["vector_store"] = {"ok": False, "detail": f"向量库不可用：{exc}"}
+
+    # ---- MCP 工单检索（未接入，如实标记而不是伪装健康）----
+    components["mcp"] = {"ok": False, "detail": "尚未接入（D7：ticket_search MCP server）"}
+
+    # ---- 启动预热结果：首 Token 达标与否取决于它（NFR-01）----
+    try:
+        from ..dependency import warmup
+
+        components["warmup"] = {
+            "ok": bool(warmup.ok),
+            "detail": (
+                f"{warmup.elapsed_ms}ms · 向量库={warmup.vector_store} · 精排={warmup.reranker}"
+                + (f" · 问题：{'；'.join(warmup.problems)}" if warmup.problems else "")
+            ),
+        }
+    except Exception as exc:  # noqa: BLE001
+        components["warmup"] = {"ok": False, "detail": f"预热状态不可读：{exc}"}
 
     all_ok = all(bool(item.get("ok")) for item in components.values())
     status = "down" if not components["graph"]["ok"] else ("ok" if all_ok else "degraded")

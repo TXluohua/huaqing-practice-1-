@@ -53,7 +53,9 @@ GRAPH_NAME = "smka_qa_graph"
 _REQUIRED_NODE_MODULES: tuple[str, ...] = ("retrieval", "generation")
 
 #: 平台侧节点模块（可能尚未实现；导入失败只警告，不影响检索/生成链路）
-_OPTIONAL_NODE_MODULES: tuple[str, ...] = ("multimodal",)
+#: multimodal -> ingest_image / augment；response -> respond（甲侧，与 multimodal 分开
+#: 是因为 respond 与多模态无关，不应塞进同一个模块）。
+_OPTIONAL_NODE_MODULES: tuple[str, ...] = ("multimodal", "response")
 
 
 def _load_node_modules() -> None:

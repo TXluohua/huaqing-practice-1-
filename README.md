@@ -2,92 +2,84 @@
 
 面向半导体设备维护的知识库问答系统。核心命题：**查得准、引得实、不敢答的敢说不知道**。
 
-完整设计见 `半导体设备维护知识库智能问答系统_开发文档（初稿）(2).md`。
+完整设计见 `半导体设备维护知识库智能问答系统_开发文档（初稿）(2).md`，
+接口契约见 `接口文档.md`，分工与协作约定见 `后端二人分工与协作规范.md`。
 
 ---
 
-## 当前进度
+## 当前状态
 
-**LangGraph 链路骨架已打通，节点与边待接入。**
+**端到端已跑通**：LangGraph 九节点主链路 + RAG 检索生成 + FastAPI 接口层 + Vue3 前端。
 
-| 已完成 | 说明 |
-| --- | --- |
-| 状态契约 | `backend/agents/state.py` —— AgentState / Evidence / Citation / ImageExtraction |
-| 图构建与编译 | `backend/agents/graph.py` —— 零节点时 START 直连 END |
-| 异步单例 | `backend/agents/agent_factory.py` —— get_agent / ainvoke / astream |
-| 会话记忆 | `backend/memory.py` —— sqlite 检查点 + session_id ↔ thread_id 映射 |
-| 自检入口 | `scripts/ask.py`、`tests/test_agents/test_graph.py` |
+| 层 | 状态 | 位置 |
+| --- | --- | --- |
+| 状态契约 | ✅ | `backend/agents/state.py` |
+| 主图（9 节点 + 条件边） | ✅ | `backend/agents/graph.py`、`backend/agents/nodes/` |
+| 检索与生成（RAG） | ✅ | `backend/rag/`、`backend/tools/kb_tools.py` |
+| 接口层（10 个接口 + SSE） | ✅ | `backend/routers/` |
+| 服务层 | ✅ | `backend/services/{chat_service,kb_service}.py` |
+| 业务库与会话检查点 | ✅ | `backend/db.py`（业务）、`backend/memory.py`（检查点） |
+| 应用入口与预热 | ✅ | `backend/main.py`、`backend/dependency.py` |
+| 前端 | ✅ | `frontend/`（Vue3 + Vite + Element Plus） |
 
-节点注册表（`backend/agents/nodes/__init__.py`）当前为空，因此图中**没有节点、没有业务边**，
-但 compile / invoke / ainvoke / stream / 检查点 / 会话隔离这整条链路已经可用。
+**尚未接入**：MCP 工单检索（D7）、图片知识侧入库、docx/pptx/xlsx 解析（需 MarkItDown）、
+生产部署（`deploy/`、`docker-compose.yml`）。
 
 ---
 
 ## 快速开始
 
-### 1. 准备虚拟环境
+### 1. 准备后端环境
 
 ```bash
-make install          # 等价于 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+make install          # python3 -m venv .venv && pip install -r requirements.txt
 ```
 
-或手动执行：
+### 2. 准备模型并建索引
+
+检索质量依赖本地模型（**约 4.6GB，不入库**）：
 
 ```bash
-python3 -m venv .venv
-.venv/bin/python -m pip install --upgrade pip
-.venv/bin/python -m pip install -r requirements.txt
-source .venv/bin/activate      # 可选，激活后可直接用 python / pytest
+.venv/bin/python scripts/prepare_model.py --check          # 看模型是否就绪
+.venv/bin/python scripts/prepare_model.py --download --source modelscope --with-reranker
+make ingest                                                # 建索引（5 文档 / 32 切片）
 ```
 
-> 项目所有命令都走 `.venv/bin/python`，不依赖系统 Python 环境。
+> 本机没有模型时，可临时用零依赖兜底跑通全链路（检索质量下降，日志会告警）：
+> `EMBEDDING_PROVIDER=hashing RERANK_PROVIDER=lexical make ingest`
 
-### 2. 验证链路
+### 3. 启动服务
 
 ```bash
-make test                                  # 7 个链路测试
-make ask Q="刻蚀机真空度异常怎么排查？"      # 命令行单问
-make ask-stream Q="参数下限是多少"           # 流式链路
+make dev              # 后端 http://127.0.0.1:8000  （接口文档 /docs）
+make install-web      # 首次需要：安装前端依赖
+make dev-web          # 前端 http://127.0.0.1:5173
 ```
 
-预期输出（骨架阶段暂无节点，答案为空、状态为 NOT_COVERED）：
+浏览器打开 **http://127.0.0.1:5173** 即可问答。前端通过 Vite 代理把 `/api` 与 `/static`
+转发到 `http://localhost:8000`，无需额外配置跨域。
 
+### 4. 配置密钥（可选但强烈建议）
+
+```bash
+cp .env.example .env
 ```
-检查点后端  : sqlite-async（落盘=True）
-已接入节点  : 无（骨架阶段，START -> END 直连）
-thread_id   : thread-venv-demo
-状态        : NOT_COVERED  置信度=0.0
-答案        : （空 —— 尚未接入 generate 节点）
-```
 
-### 3. 会话持久化
-
-检查点落在 `backend/data/sqlite/checkpoints.sqlite`（该目录已在 .gitignore 中）。
-同一 `session_id` 复用同一 `thread_id`，**进程重启后仍可读回历史状态**。
-若卸载 `langgraph-checkpoint-sqlite`，`memory.py` 会自动降级为内存后端，主链路不中断。
+| 变量 | 作用 | 未配置时 |
+| --- | --- | --- |
+| `DEEPSEEK_API_KEY` | 文本生成 | 降级为**抽句式答案**，要点命中率明显下降 |
+| `DASHSCOPE_API_KEY` | 图片识别（qwen-vl-max） | 多模态提问不可用，提示改用文字 |
 
 ---
 
-## 接入节点
+## 常用命令
 
-节点写在 `backend/agents/nodes/` 下并注册即可自动进链路：
-
-```python
-# backend/agents/nodes/retrieval.py
-from ..state import AgentState
-
-async def rewrite(state: AgentState) -> dict:
-    """问题 -> 2~3 路检索式"""
-    return {"queries": [state["question"]]}
-
-# 注册
-from backend.agents.nodes import NodeName, register_node
-register_node(NodeName.REWRITE, rewrite)
+```bash
+make test                                  # 全量测试（48 个用例）
+make ask Q="刻蚀机腔体真空度异常怎么排查？"   # 命令行单问
+make ask-stream Q="参数下限是多少"           # 流式链路
+make clean                                 # 清理字节码与测试缓存
 ```
-
-顺序由 `NODE_SEQUENCE`（开发文档 4.3）决定。
-真实拓扑含条件分支（证据是否足够 → 是否走 augment），
-需在 `graph.build_graph()` 中改用 `add_conditional_edges`，该处已标 TODO。
 
 ---
 
@@ -95,20 +87,34 @@ register_node(NodeName.REWRITE, rewrite)
 
 ```
 backend/
-├── agents/          # 编排：state / graph / agent_factory / nodes / prompts
-├── memory.py        # 检查点与会话映射
-├── data/            # 运行时数据（不入 git）
-scripts/ask.py       # 命令行自检
-tests/test_agents/   # 链路测试
+├── main.py            # FastAPI 入口 + lifespan 预热
+├── setting.py         # 全部配置（调参不改代码）
+├── schemas.py         # 请求/响应契约 + ServiceError
+├── dependency.py      # 启动预热与进程级单例
+├── db.py              # 业务库模型（SQLite 开发 / MySQL 生产）
+├── memory.py          # 会话检查点（SqliteSaver）+ session↔thread 映射
+├── routers/           # 路由层：只做 HTTP 翻译
+├── services/          # 服务层：会话/问答/入库/索引
+├── agents/            # LangGraph：state / graph / factory / nodes / prompts
+├── rag/               # 解析、切片、向量库、混合检索、精排、引用校验
+├── tools/             # 工具（检索、术语、图片识别、备件查询）
+└── data/              # 运行时数据（索引、模型、上传、检查点；不入 git）
+frontend/              # Vue3 + Vite + Element Plus
+data/
+├── raw/               # 入库语料
+└── eval/              # 黄金集与 badcase
 ```
 
 依赖方向（开发文档 6.1）：`routers → services → agents/tools/rag → config`，禁止反向 import。
 
 ---
 
-## 尚未实现
+## 关键机制
 
-- HTTP / SSE 接入层（`main.py`、`routers/`、`services/`）
-- 9 个业务节点（rewrite / retrieve / rerank / build_context / augment / generate / verify / respond / ingest_image）
-- RAG 链路（解析、切片、向量库、混合检索、精排）
-- MCP 工单检索、前端 Vue3 页面
+| 机制 | 说明 |
+| --- | --- |
+| **启动预热** | `lifespan` 预加载 embedding 与精排（实测约 10.2s）。不预热会把这段时间算进第一个请求的首 Token，顶穿 NFR-01（首 Token ≤ 2s） |
+| **降级不中断** | 模型/MCP/数据库任一不可用都不阻止启动，由 `GET /api/health` 如实报 `degraded` 并给出原因 |
+| **SSE 事件** | `meta → image? → token* → citations → done`，失败发 `error`；契约见 `接口文档.md` §6 |
+| **token 缓冲** | token 在 `verify` 定稿后才发：verify 拒答时会改写答案，若已流式发出，用户会先看到操作步骤再看到拒答 |
+| **零幻觉** | 引用由代码分配、verify 独立校验、证据不足即拒答；备件替代无依据时明确「需原厂确认」 |
