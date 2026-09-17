@@ -37,9 +37,16 @@ _NO_CITE_PATTERNS = (
     # 纯引用行，如「- [1] 《刻蚀设备维护手册》 V3.2 第 3 页 章节 3.4」
     re.compile(r"^[\s\-*\d.、]*\[\d+(?:\s*[,，]\s*\d+)*\]"),
     re.compile(r"^[\s\-*\d.、]*《.+》\s*V?[\d.]+.*(页|章节)"),
+    # Markdown 粗体小标题整行（如「**基础理解**」）：结构行，不是知识结论
+    re.compile(r"^\*{1,2}[^*\n]{1,40}\*{1,2}\s*[：:]?\s*$"),
 )
-#: 覆盖率豁免：这些句子属于「未覆盖说明」而不是结论
-_DISCLAIMER_RE = re.compile(r"(知识库未覆盖|未检索到|无法确认|未找到|不确定|请人工确认|建议转人工)")
+#: 覆盖率豁免：这些句子属于「未覆盖说明 / 模板尾注」而不是知识结论
+#: 注意：培训模式（FR-09）的讲解模板会带结构行与尾注，它们不是结论句 ——
+#: 若不豁免，讲解类回答会被判「覆盖率不足」而误拒（实测踩到过）。
+_DISCLAIMER_RE = re.compile(
+    r"(知识库未覆盖|未检索到|无法确认|未找到|不确定|请人工确认|建议转人工"
+    r"|以上内容摘自|以设备实际型号与版本为准|现场作业请)"
+)
 
 #: 拒答时的固定话术（不给出操作步骤 —— 开发文档 4.2「不做什么」）
 NOT_COVERED_TEMPLATE = (
@@ -388,6 +395,8 @@ def should_reject(
     question: str = "",
     corpus_text: str | None = None,
     score_threshold: float | None = None,
+    anchor_query: str | None = None,
+    is_followup: bool = False,
 ) -> RejectionDecision:
     """四道关的最终闸门：任何一道不过 → 拒答（NOT_COVERED）。
 
@@ -413,10 +422,17 @@ def should_reject(
         reasons.append(f"精排最高分 {normalized_top:.2f} 低于阈值 {threshold:.2f}")
 
     # 锚点校验：型号 / 数值 / 关键术语必须真的在材料里（负样本拒答的主要闸门）
+    # 锚点校验比对的是「本次检索表达的意图」，而不是原始字面问题：
+    # 追问（「你刚才说的第一步是什么？」）的指代词与「第一步」在知识库里必然查不到，
+    # 但它的检索式已经把上文补进来了 —— 拿原始句去校验会把正确回答误判为未覆盖（实测踩到过）。
+    # 追问场景：指代句本身与材料没有词面交集是正常的（上文已由检索式补全），
+    # 因此只放宽「上下文术语覆盖率」这一条；型号、数值、知识库缺失比三条照旧不放松。
     anchors = anchor_check(
-        question,
+        anchor_query or question,
         blocks,
-        min_term_coverage=settings.anchor_term_coverage,
+        min_term_coverage=(
+            min(settings.anchor_term_coverage, 0.34) if is_followup else settings.anchor_term_coverage
+        ),
         corpus_text=corpus_text,
         max_kb_missing_ratio=settings.anchor_kb_missing_ratio,
     )
@@ -432,6 +448,15 @@ def should_reject(
     if blocks and check.total_claims and check.coverage < effective_required:
         reasons.append(
             f"引用覆盖率 {check.coverage:.0%} 低于要求 {effective_required:.0%}"
+        )
+
+    if is_followup and reasons and not anchors.missing_models:
+        # 追问的指代对象没能从材料里确认时，直接告诉用户怎么问才能答 ——
+        # 纯代词追问（「那它的更换周期是多少？」）在确定性链路里无法消解指代，
+        # 保守拒答是对的，但话术必须可操作，否则用户只会以为「系统坏了」。
+        reasons.append(
+            "本次追问依赖上文的指代对象，未能从检索到的材料中确认指代目标；"
+            "建议在追问里补上具体部件或参数名称（例如「腔体门 O-ring 的更换周期」）"
         )
 
     materials = [
