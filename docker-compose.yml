@@ -1,0 +1,66 @@
+# 一键起服务（开发文档 §6.2 / 平台侧待办清单第 5 项）
+#
+#   docker compose up -d --build
+#   浏览器打开 http://localhost
+#
+# 模型策略二选一：
+#   A（推荐）宿主机准备模型，卷挂载进容器：
+#       .venv/bin/python scripts/prepare_model.py --download --source modelscope --with-reranker
+#       docker compose up -d
+#   B 构建时下载进镜像（镜像约 +5GB）：
+#       PREPARE_MODELS=true docker compose build backend
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.backend
+      args:
+        PREPARE_MODELS: "${PREPARE_MODELS:-false}"
+    image: smka-backend:latest
+    container_name: smka-backend
+    restart: unless-stopped
+    environment:
+      # ---- 模型与检索 ----
+      EMBEDDING_PROVIDER: "${EMBEDDING_PROVIDER:-local}"
+      RERANK_PROVIDER: "${RERANK_PROVIDER:-auto}"
+      EMBEDDING_OFFLINE: "true"
+      # ---- 密钥（从宿主机 .env 注入，绝不写进镜像）----
+      DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:-}"
+      DEEPSEEK_BASE_URL: "${DEEPSEEK_BASE_URL:-https://api.deepseek.com}"
+      DASHSCOPE_API_KEY: "${DASHSCOPE_API_KEY:-}"
+      # ---- 业务库（默认 SQLite；换 MySQL 时改这一行并另起 mysql 服务）----
+      DATABASE_URL: "${DATABASE_URL:-sqlite+aiosqlite:////app/backend/data/sqlite/business.sqlite}"
+      # ---- 其它 ----
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+      DEBUG: "${DEBUG:-false}"
+    volumes:
+      # 索引 / 模型 / 上传 / 会话检查点都落在这里，容器重建不丢
+      - ./backend/data:/app/backend/data
+      - ./data/raw:/app/data/raw:ro
+      - ./backend/config:/app/backend/config:ro
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      # 预热向量库与精排（约 10s+），冷启动必须留够
+      start_period: 120s
+      retries: 3
+
+  frontend:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.frontend
+    image: smka-frontend:latest
+    container_name: smka-frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "80:80"
+
+# 说明：单机部署直接用 SQLite 即可；要多实例时再引入 mysql 服务，
+# 并把 backend 的 DATABASE_URL 改成 mysql+aiomysql://...

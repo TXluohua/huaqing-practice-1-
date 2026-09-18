@@ -124,8 +124,20 @@ async def health(verbose: bool = Query(default=False, description="返回组件�
     except Exception as exc:  # noqa: BLE001
         components["vector_store"] = {"ok": False, "detail": f"向量库不可用：{exc}"}
 
-    # ---- MCP 工单检索（未接入，如实标记而不是伪装健康）----
-    components["mcp"] = {"ok": False, "detail": "尚未接入（D7：ticket_search MCP server）"}
+    # ---- MCP 工单检索（真实探测：加载失败会被降级为空工具并在 detail 说明原因）----
+    try:
+        from ..tools import mcp_status
+
+        mcp = mcp_status()
+        tools_list = mcp.get("registered") or mcp.get("tools") or []
+        components["mcp"] = {
+            "ok": bool(mcp.get("ok")),
+            "degraded": bool(mcp.get("degraded")),
+            "tools": tools_list,
+            "detail": str(mcp.get("detail") or ""),
+        }
+    except Exception as exc:  # noqa: BLE001 - 健康检查本身不得抛出
+        components["mcp"] = {"ok": False, "detail": f"MCP 状态不可读：{exc}"}
 
     # ---- 启动预热结果：首 Token 达标与否取决于它（NFR-01）----
     try:

@@ -37,11 +37,18 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     """启动预热 / 关闭释放。"""
 
     settings = get_settings()
-    logging.basicConfig(
-        level=logging.DEBUG if settings.debug else logging.INFO,
-        format="%(levelname)s %(name)s: %(message)s",
+    # 日志级别与 debug 解耦：默认 INFO（NFR-03）。DEBUG 会让 LangGraph 把整个
+    # 检查点状态打进日志，需要时显式设 LOG_LEVEL=DEBUG。
+    from .utils.text import setup_logging
+
+    effective_level = setup_logging(settings.log_level)
+    logger.info(
+        "启动 %s v%s（log_level=%s, debug=%s）",
+        settings.app_name,
+        settings.app_version,
+        effective_level,
+        settings.debug,
     )
-    logger.info("启动 %s v%s（debug=%s）", settings.app_name, settings.app_version, settings.debug)
 
     report = await warm_up()
     if not report.ok:

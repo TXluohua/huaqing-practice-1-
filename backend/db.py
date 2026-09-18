@@ -130,6 +130,24 @@ class QaFeedback(Base):
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=_utcnow, index=True)
 
 
+class QuestionStat(Base):
+    """高频问题统计（FR-09 本期交付：高频问题记录）。
+
+    用途：反推培训内容与知识补充方向；管理页展示「被问得最多的 N 个问题」。
+    以**归一化后的问题**为主键（去空白标点、转小写、截断），
+    同一问题的不同标点/空格写法会归并到同一条。
+    """
+
+    __tablename__ = "question_stat"
+
+    question_key: Mapped[str] = mapped_column(String(255), primary_key=True)
+    #: 保留一条原始问法，便于展示
+    sample_question: Mapped[str] = mapped_column(LongText)
+    ask_count: Mapped[int] = mapped_column(Integer, default=1, index=True)
+    first_asked_at: Mapped[datetime] = mapped_column(UTCDateTime, default=_utcnow)
+    last_asked_at: Mapped[datetime] = mapped_column(UTCDateTime, default=_utcnow, index=True)
+
+
 class KbDocument(Base):
     """知识库文档与版本（FR-08）。"""
 
@@ -289,6 +307,7 @@ __all__ = [
     "KbImage",
     "QaFeedback",
     "QaRecord",
+    "QuestionStat",
     "SessionMap",
     "check_health",
     "dispose_db",

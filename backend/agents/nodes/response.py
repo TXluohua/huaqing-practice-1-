@@ -25,6 +25,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
+from ...setting import get_settings
 from ..state import AgentState
 from . import NodeName, register_node
 
@@ -66,6 +67,38 @@ def _elapsed(started: float, name: str) -> dict[str, float]:
     return {name: round((time.perf_counter() - started) * 1000, 2)}
 
 
+#: FR-02 失败处理（开发文档 §3.2）：识别不出来时必须明确提示改用文字，
+#: 且**不允许猜测**。这是给用户「能照做」的下一步，不是技术报错。
+IMAGE_UNRECOGNIZED_NOTICE = "图片未能识别，请用文字描述现象（例如报警码、参数名或设备型号）。"
+
+
+def build_image_notice(state: AgentState) -> str | None:
+    """图片识别失败时必须给出可见提示（FR-02）。
+
+    判定口径与 ingest_image 节点保持一致：没有识别结果、image_type=unknown、
+    或置信度低于阈值，都算「未能识别」。
+
+    为什么放在 respond：ingest_image 只能把原因写进 errors，而 errors 不下发到前端；
+    真正能到用户眼前的通道是 SSE done 事件的 uncertain[]。
+    """
+
+    if not (state.get("image_ids") or []):
+        return None
+
+    result = state.get("image_result")
+    if result is None:
+        return IMAGE_UNRECOGNIZED_NOTICE
+
+    image_type = str(getattr(result, "image_type", "unknown") or "unknown")
+    try:
+        confidence = float(getattr(result, "confidence", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        confidence = 0.0
+    if image_type == "unknown" or confidence < get_settings().vision_min_confidence:
+        return IMAGE_UNRECOGNIZED_NOTICE
+    return None
+
+
 def build_safety_notice(state: AgentState) -> str | None:
     """按回答内容判定是否需要安全前置提示；拒答时返回 None。"""
 
@@ -88,10 +121,16 @@ async def respond(state: AgentState) -> dict[str, Any]:
     uncertain = list(state.get("uncertain") or [])
     errors = list(state.get("errors") or [])
 
-    notice = build_safety_notice(state)
-    if notice and notice not in uncertain:
-        # 前置：安全提示放在 uncertain 最前面，前端按顺序渲染
-        uncertain = [notice, *uncertain]
+    # 提示类文案统一走 uncertain：这是 SSE 契约里唯一能承载额外文案、
+    # 且前端 MessageList 会渲染的字段（不需要改已冻结的事件结构）。
+    # 顺序：先「图片未识别」（针对输入，用户需要立刻照做），后「安全提示」（针对输出）。
+    notices = [
+        item
+        for item in (build_image_notice(state), build_safety_notice(state))
+        if item and item not in uncertain
+    ]
+    if notices:
+        uncertain = [*notices, *uncertain]
 
     response: dict[str, Any] = {
         "trace_id": state.get("trace_id") or "",
@@ -113,11 +152,11 @@ async def respond(state: AgentState) -> dict[str, Any]:
     }
 
     out: dict[str, Any] = {"response": response, "timings": _elapsed(started, "respond")}
-    if notice:
+    if notices:
         out["uncertain"] = uncertain
     return out
 
 
 register_node(NodeName.RESPOND, respond)
 
-__all__ = ["build_safety_notice", "respond"]
+__all__ = ["IMAGE_UNRECOGNIZED_NOTICE", "build_image_notice", "build_safety_notice", "respond"]

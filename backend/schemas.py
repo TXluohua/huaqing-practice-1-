@@ -275,3 +275,25 @@ class ChunkListResponse(BaseModel):
     limit: int
     offset: int
     trace_id: str
+
+
+# --------------------------------------------------------------------------- #
+# 高频问题（FR-09）
+# --------------------------------------------------------------------------- #
+
+
+class FrequentQuestionItem(BaseModel):
+    """一条高频问题统计。"""
+
+    question: str
+    question_key: str
+    ask_count: int
+    first_asked_at: str
+    last_asked_at: str
+
+
+class FrequentQuestionListResponse(BaseModel):
+    items: list[FrequentQuestionItem]
+    total: int
+    limit: int
+    trace_id: str

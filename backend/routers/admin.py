@@ -25,10 +25,11 @@ from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
 from ..schemas import (
     ChunkListResponse,
     DocumentUploadResponse,
+    FrequentQuestionListResponse,
     IndexRebuildRequest,
     JobStatusResponse,
 )
-from . import ApiError, get_kb_service, get_trace_id
+from . import ApiError, get_chat_service, get_kb_service, get_trace_id
 
 router = APIRouter(tags=["管理"])
 
@@ -122,3 +123,26 @@ async def list_chunks(
         doc_id=doc_id, q=q, page=page, limit=limit, offset=offset, trace_id=trace_id
     )
     return ChunkListResponse(items=items, total=total, limit=limit, offset=offset, trace_id=trace_id)
+
+
+@router.get(
+    "/admin/questions/top",
+    response_model=FrequentQuestionListResponse,
+    summary="高频问题榜",
+)
+async def top_questions(
+    limit: int = Query(default=20, ge=1, le=200, description="返回条数"),
+    min_count: int = Query(default=1, ge=1, description="被问次数下限"),
+    service: Any = Depends(get_chat_service),
+    trace_id: str = Depends(get_trace_id),
+) -> FrequentQuestionListResponse:
+    """高频问题统计（FR-09 本期交付）。
+
+    同一问题的不同标点/空格写法会归并计数。
+    用途：反推培训内容与知识补充方向（开发文档 FR-09「高频问题记录」）。
+    """
+
+    items = await service.top_questions(limit=limit, min_count=min_count)
+    return FrequentQuestionListResponse(
+        items=items, total=len(items), limit=limit, trace_id=trace_id
+    )

@@ -1,0 +1,50 @@
+# 后端镜像：FastAPI + LangGraph + RAG（开发文档 §6.2 / 平台侧待办清单第 5 项）
+#
+# 构建：
+#   docker build -f deploy/Dockerfile.backend -t smka-backend .
+#   # 需要把 4.6GB 本地模型打进镜像时（不推荐，镜像会很大）：
+#   docker build -f deploy/Dockerfile.backend --build-arg PREPARE_MODELS=true -t smka-backend .
+#
+# 推荐做法：模型目录用卷挂载（见 docker-compose.yml），镜像保持精简。
+
+FROM python:3.10-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONPATH=/app
+
+WORKDIR /app
+
+# 系统依赖：chromadb / pillow 需要编译期工具；curl 供 HEALTHCHECK 使用
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential curl libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# 依赖单独一层，改代码不会重装依赖
+COPY requirements.txt ./
+RUN python -m pip install --upgrade pip && python -m pip install -r requirements.txt
+
+COPY backend ./backend
+COPY scripts ./scripts
+COPY data ./data
+COPY Makefile ./
+
+# 模型可选内置（默认不内置：4.6GB 会显著拖慢构建与分发）
+ARG PREPARE_MODELS=false
+RUN if [ "$PREPARE_MODELS" = "true" ]; then \
+        python scripts/prepare_model.py --download --source modelscope --with-reranker ; \
+    fi
+
+# 模型落在项目内（不写用户家目录），与 setting.model_dir 保持一致
+ENV HF_HOME=/app/backend/data/models \
+    EMBEDDING_OFFLINE=true
+
+EXPOSE 8000
+
+# start_period 必须留够：lifespan 会预热向量库与精排（RAG 侧实测约 10s，
+# 冷启动更久），否则容器会被误判为不健康。
+HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
+    CMD curl -fsS http://127.0.0.1:8000/api/health || exit 1
+
+CMD ["python", "-m", "uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]

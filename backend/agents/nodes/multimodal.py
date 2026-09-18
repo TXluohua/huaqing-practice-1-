@@ -32,15 +32,12 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from ...mcp_servers.ticket_server import format_ticket
 from ...rag.retriever import dedupe_evidence
 from ...setting import get_settings
-from ...tools.kb_tools import (
-    TOOL_WHITELIST,
-    kb_get_chunk,
-    kb_search_expand,
-    kb_stats,
-    vision_extract,
-)
+from ...tools import call_tool as call_registered_tool
+from ...tools import is_registered, needs_external_lookup
+from ...tools.kb_tools import vision_extract
 from ..state import AgentState, Evidence, ImageExtraction
 from . import NodeName, register_node
 from .retrieval import build_context as build_context_node
@@ -152,24 +149,21 @@ async def ingest_image(state: AgentState) -> dict[str, Any]:
 # augment：受限 agent 补检索
 # --------------------------------------------------------------------------- #
 
-#: 白名单工具的可调用映射（显式映射，不用 getattr，避免任意属性注入）
-_AUGMENT_TOOLS: dict[str, Callable[..., Awaitable[Any]]] = {
-    "kb_search_expand": kb_search_expand,
-    "kb_get_chunk": kb_get_chunk,
-    "kb_stats": kb_stats,
-}
-
-
 async def _call_tool(name: str, *args: Any, **kwargs: Any) -> Any:
-    """白名单内的工具调用；越权直接抛错，不静默放行。"""
+    """白名单内的工具调用；越权或未注册都直接抛错，不静默放行。
+
+    工具注册表统一在 backend/tools/__init__.py（本地工具 + MCP 工具聚合），
+    本函数只做「白名单 ∩ 已注册」的校验与派发：
+        - 不在 setting.augment_tool_whitelist -> PermissionError
+        - 在白名单但没注册（本地缺失 / MCP 未加载）-> KeyError，由调用方按 R7 降级
+    """
 
     settings = get_settings()
-    if name not in settings.augment_tool_whitelist or name not in TOOL_WHITELIST:
+    if name not in settings.augment_tool_whitelist:
         raise PermissionError(f"工具 {name} 不在 augment 白名单内")
-    tool = _AUGMENT_TOOLS.get(name)
-    if tool is None:
-        raise KeyError(f"白名单工具 {name} 尚未接入（backend/tools/kb_tools.py）")
-    return await tool(*args, **kwargs)
+    if not is_registered(name):
+        raise KeyError(f"白名单工具 {name} 未注册（本地工具缺失或 MCP 未加载）")
+    return await call_registered_tool(name, *args, **kwargs)
 
 
 def _best_of(items: list[Evidence]) -> Evidence:
@@ -177,6 +171,103 @@ def _best_of(items: list[Evidence]) -> Evidence:
         items,
         key=lambda item: item.rerank_score if item.rerank_score is not None else item.score,
     )
+
+
+#: 结构化数据源（备件台账 / 工单系统）的等效归一化分：
+#: 它们不是语义检索结果，而是精确查询结果，命中即高可信。
+_STRUCTURED_NORMALIZED = 0.9
+
+
+def _parts_evidence(payload: Any) -> Evidence | None:
+    """备件查询结果 -> 证据块（FR-10）。
+
+    无论查到还是没查到都产出证据块：查不到时也要让生成节点有**可引用的依据**
+    去说明「需原厂确认」，而不是让 verify 因为「无引用」把整条回答判成未覆盖。
+    """
+
+    if not isinstance(payload, dict):
+        return None
+
+    code = str(payload.get("code") or "unknown")
+    if payload.get("found"):
+        lines = [
+            f"备件：{payload.get('part')}（编码 {code}）",
+            f"适用设备：{payload.get('device_model') or '通用'}",
+            f"当前库存：{payload.get('stock')} {payload.get('unit') or ''}"
+            f"（库位 {payload.get('location') or '未登记'}）",
+            f"预计到货：{payload.get('lead_time_days')} 天",
+        ]
+        if payload.get("spec"):
+            lines.append(f"规格：{payload['spec']}")
+        substitutes = payload.get("substitutes") or []
+        if substitutes:
+            for sub in substitutes:
+                lines.append(
+                    f"可用替代件：{sub.get('part')}（{sub.get('code')}，库存 {sub.get('stock')}）"
+                    f"—— 依据：{sub.get('basis')}"
+                    + ("；须经设备工程师确认" if sub.get("requires_approval") else "")
+                )
+        else:
+            lines.append("替代件：无可推荐的替代件（需原厂确认，不做无依据推断）")
+    else:
+        lines = [
+            f"备件目录中未找到：{payload.get('part') or '该备件'}",
+            "结论：不做无依据的替代推断，需原厂确认。",
+        ]
+
+    notes = payload.get("notes") or []
+    if notes:
+        lines.append("备注：" + "；".join(str(note) for note in notes))
+
+    return Evidence(
+        chunk_id=f"parts_{code}",
+        text="\n".join(lines),
+        score=_STRUCTURED_NORMALIZED,
+        rerank_score=_STRUCTURED_NORMALIZED,
+        metadata={
+            "doc_title": "备件库存台账",
+            "version": str(payload.get("updated_at") or "示例数据"),
+            "section": code,
+            "page": 1,
+            "source_type": "kb_doc",
+            "rerank_provider": "structured",
+            "rerank_normalized": _STRUCTURED_NORMALIZED,
+            "external": True,
+        },
+    )
+
+
+def _ticket_evidence(rows: Any) -> list[Evidence]:
+    """历史工单 -> 证据块（FR-03 跨源）。
+
+    source_type 必须是 ticket：前端 CitationCard 按它切换渲染分支，
+    填成 kb_doc 会把工单显示成手册文档。
+    """
+
+    items: list[Evidence] = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        ticket_no = str(row.get("ticket_no") or "unknown")
+        items.append(
+            Evidence(
+                chunk_id=f"ticket_{ticket_no}",
+                text=format_ticket(row),
+                score=float(row.get("score") or 0.0),
+                rerank_score=_STRUCTURED_NORMALIZED,
+                metadata={
+                    "doc_title": f"历史工单 {ticket_no}",
+                    "version": str(row.get("date") or ""),
+                    "section": str(row.get("device_model") or ""),
+                    "page": 1,
+                    "source_type": "ticket",
+                    "rerank_provider": "structured",
+                    "rerank_normalized": _STRUCTURED_NORMALIZED,
+                    "external": True,
+                },
+            )
+        )
+    return items
 
 
 async def _augment_once(
@@ -194,6 +285,30 @@ async def _augment_once(
     errors: list[str] = []
     collected: list[Evidence] = []
     used = 0
+
+    # 0) 外部数据源优先：备件库存（FR-10）与历史工单（FR-03）都不在知识库文档里，
+    #    但它们是本类问题**真正的答案来源**，所以放在补检索之前。
+    for tool_name in needs_external_lookup(question):
+        if used >= budget:
+            break
+        try:
+            if tool_name == "parts_query":
+                payload = await _call_tool("parts_query", question, state.get("device_model"))
+                used += 1
+                evidence = _parts_evidence(payload)
+                if evidence is not None:
+                    collected.append(evidence)
+            elif tool_name == "ticket_search":
+                rows = await _call_tool(
+                    "ticket_search",
+                    symptom=question,
+                    device_model=state.get("device_model"),
+                    limit=2,
+                )
+                used += 1
+                collected.extend(_ticket_evidence(rows))
+        except Exception as exc:  # noqa: BLE001 - R7：外部源失败只降级，不中断主链路
+            errors.append(f"外部数据源调用失败（{tool_name}）：{exc}")
 
     # 1) 放宽元数据过滤补检索（去掉型号/分类限制，扩大召回）
     for query in queries[: max(1, budget - 1)]:
