@@ -15,41 +15,48 @@
 /* ============================================================== 1. 设计令牌 */
 
 :root {
-  /* ---- 主色：品牌蓝。50/100 用于浅底，600 为交互主色，700 为按下态 ---- */
-  --brand-50: #eff5ff;
-  --brand-100: #dbe8fe;
-  --brand-200: #bed0f9;
-  --brand-400: #6692f1;
-  --brand-500: #3b76ee;
-  --brand-600: #2563eb;
-  --brand-700: #1d4ed8;
+  /* ---- 主色：青蓝。50/100 用于深色底上的浅色层，600 为交互主色 ---- */
+  --brand-50: rgba(0, 212, 255, 0.08);
+  --brand-100: rgba(0, 212, 255, 0.12);
+  --brand-200: rgba(0, 212, 255, 0.2);
+  --brand-400: #00d4ff;
+  --brand-500: #00b8e6;
+  --brand-600: #00d4ff;
+  --brand-700: #00a0cc;
 
-  /* ---- 中性色：带一点冷调，与蓝色主色同族 ---- */
-  --ink-900: #1f2328; /* 标题 / 正文 */
-  --ink-700: #424852; /* 强调正文 */
-  --ink-500: #5c6370; /* 次要文字 */
-  --ink-400: #8b919e; /* 辅助说明 */
-  --ink-300: #aab0ba; /* 占位符 */
+  /*
+   * 铺在品牌青底上的文字色。
+   * 不用白色：白字压在 #00d4ff 上对比度约 1.8:1，投屏时基本糊成一团；
+   * 近黑的 #04121a 对同一底色有 12:1 以上，且保住了「青 = 主行动」的识别度。
+   */
+  --on-brand: #04121a;
 
-  /* ---- 表面：页面底比卡片稍暗，靠明度差分层，而不是靠边框 ---- */
-  --surface-0: #ffffff;
-  --surface-1: #f7f8fa;
-  --surface-2: #eef0f4;
-  --surface-3: #e4e7ec;
+  /* ---- 中性色：浅色文字（深色主题下反转） ---- */
+  --ink-900: #e6edf3; /* 标题 / 正文 */
+  --ink-700: #c9d1d9; /* 强调正文 */
+  --ink-500: #8b949e; /* 次要文字 */
+  --ink-400: #6e7681; /* 辅助说明 */
+  --ink-300: #484f58; /* 占位符 */
+
+  /* ---- 表面：深色分层，靠明度差而非边框 ---- */
+  --surface-0: #161b22;
+  --surface-1: #0d1117;
+  --surface-2: #1c2330;
+  --surface-3: #262d3a;
 
   /* ---- 描边 ---- */
-  --line-1: #e6e8ec;
-  --line-2: #dcdfe5;
+  --line-1: #30363d;
+  --line-2: #21262d;
 
-  /* ---- 语义色 ---- */
-  --ok-600: #15803d;
-  --ok-50: #ecfdf3;
-  --warn-600: #b45309;
-  --warn-50: #fffaeb;
-  --danger-600: #dc2626;
-  --danger-50: #fef3f2;
-  --info-600: #475467;
-  --info-50: #f2f4f7;
+  /* ---- 语义色：深色主题适配 ---- */
+  --ok-600: #2dd4bf;
+  --ok-50: rgba(45, 212, 191, 0.1);
+  --warn-600: #fbbf24;
+  --warn-50: rgba(251, 191, 36, 0.1);
+  --danger-600: #f87171;
+  --danger-50: rgba(248, 113, 113, 0.1);
+  --info-600: #8b949e;
+  --info-50: rgba(139, 148, 158, 0.1);
 
   /* ---- 间距刻度（4 的倍数）---- */
   --sp-1: 4px;
@@ -68,11 +75,19 @@
   --r-xl: 18px;
   --r-pill: 999px;
 
-  /* ---- 阴影：层叠式，越靠上的层级越发散 ---- */
-  --sh-xs: 0 1px 2px rgb(16 24 40 / 4%);
-  --sh-sm: 0 1px 3px rgb(16 24 40 / 6%), 0 1px 2px rgb(16 24 40 / 4%);
-  --sh-md: 0 4px 12px rgb(16 24 40 / 7%);
-  --sh-lg: 0 12px 32px rgb(16 24 40 / 10%);
+  /* ---- 阴影：深色主题下用青色辉光替代灰色阴影 ---- */
+  /* 深色底上灰色阴影几乎不可见，投影靠**更黑**来体现层次，辉光靠青色表达「活动」 */
+  --sh-xs: 0 1px 2px rgb(0 0 0 / 40%);
+  --sh-sm: 0 1px 3px rgb(0 0 0 / 45%), 0 1px 2px rgb(0 0 0 / 30%);
+  --sh-md: 0 4px 12px rgb(0 0 0 / 50%);
+  --sh-lg: 0 12px 32px rgb(0 0 0 / 55%), 0 0 24px rgba(0, 212, 255, 0.04);
+
+  /* ---- 辉光：集中定义，避免各处手写 rgba(0,212,255,…) 时透明度飘 ---- */
+  --glow-1: 0 0 8px rgba(0, 212, 255, 0.25);
+  --glow-2: 0 0 12px rgba(0, 212, 255, 0.2);
+  --glow-3: 0 0 20px rgba(0, 212, 255, 0.08);
+  /* 聚焦环：与 :focus-visible 的 outline 并列使用在需要发光描边的容器上 */
+  --ring-brand: 0 0 0 3px rgba(0, 212, 255, 0.14);
 
   /* ---- 字号 ---- */
   --fs-xs: 12px;
@@ -93,13 +108,13 @@
 /* ==================================================== 2. Element Plus 覆写 */
 
 :root {
-  /* 主色阶与品牌色对齐，否则按钮 / 标签 / 聚焦环会是 EP 默认的 #409eff */
+  /* 主色阶与青蓝对齐，否则按钮 / 标签 / 聚焦环会是 EP 默认的 #409eff */
   --el-color-primary: var(--brand-600);
-  --el-color-primary-light-3: var(--brand-400);
-  --el-color-primary-light-5: #92b1f5;
-  --el-color-primary-light-7: var(--brand-200);
-  --el-color-primary-light-8: #d3e0fb;
-  --el-color-primary-light-9: var(--brand-50);
+  --el-color-primary-light-3: #00b8e6;
+  --el-color-primary-light-5: rgba(0, 212, 255, 0.5);
+  --el-color-primary-light-7: rgba(0, 212, 255, 0.3);
+  --el-color-primary-light-8: rgba(0, 212, 255, 0.18);
+  --el-color-primary-light-9: rgba(0, 212, 255, 0.1);
   --el-color-primary-dark-2: var(--brand-700);
 
   --el-color-success: var(--ok-600);
@@ -108,24 +123,93 @@
   --el-color-error: var(--danger-600);
   --el-color-info: var(--info-600);
 
+  /*
+   * 语义色的 light-3 ~ light-9 必须一并覆写。
+   * EP 用 light-9 当 alert / message 的**底色**、light-8 当描边，
+   * 而它的默认值是给浅色主题准备的（比如 error-light-9 = #fef0f0）。
+   * 只改 --el-color-error 不改它，深色页面上就会蹦出一块浅粉色的告警条。
+   * 这里统一改成同色系的低透明度值，压在深色底上自然变暗。
+   */
+  --el-color-success-light-3: #2fae9c;
+  --el-color-success-light-5: rgba(45, 212, 191, 0.5);
+  --el-color-success-light-7: rgba(45, 212, 191, 0.3);
+  --el-color-success-light-8: rgba(45, 212, 191, 0.2);
+  --el-color-success-light-9: rgba(45, 212, 191, 0.1);
+  --el-color-success-dark-2: #5eead4;
+
+  --el-color-warning-light-3: #d9a520;
+  --el-color-warning-light-5: rgba(251, 191, 36, 0.5);
+  --el-color-warning-light-7: rgba(251, 191, 36, 0.3);
+  --el-color-warning-light-8: rgba(251, 191, 36, 0.2);
+  --el-color-warning-light-9: rgba(251, 191, 36, 0.1);
+  --el-color-warning-dark-2: #fcd34d;
+
+  --el-color-danger-light-3: #d95f5f;
+  --el-color-danger-light-5: rgba(248, 113, 113, 0.5);
+  --el-color-danger-light-7: rgba(248, 113, 113, 0.3);
+  --el-color-danger-light-8: rgba(248, 113, 113, 0.2);
+  --el-color-danger-light-9: rgba(248, 113, 113, 0.1);
+  --el-color-danger-dark-2: #fca5a5;
+
+  /* error 与 danger 在 EP 里是两套变量，两边都要给 */
+  --el-color-error-light-3: var(--el-color-danger-light-3);
+  --el-color-error-light-5: var(--el-color-danger-light-5);
+  --el-color-error-light-7: var(--el-color-danger-light-7);
+  --el-color-error-light-8: var(--el-color-danger-light-8);
+  --el-color-error-light-9: var(--el-color-danger-light-9);
+  --el-color-error-dark-2: var(--el-color-danger-dark-2);
+
+  --el-color-info-light-3: #7b838d;
+  --el-color-info-light-5: rgba(139, 148, 158, 0.5);
+  --el-color-info-light-7: rgba(139, 148, 158, 0.3);
+  --el-color-info-light-8: rgba(139, 148, 158, 0.2);
+  --el-color-info-light-9: rgba(139, 148, 158, 0.1);
+  --el-color-info-dark-2: #a8b1bb;
+
   --el-text-color-primary: var(--ink-900);
   --el-text-color-regular: var(--ink-700);
   --el-text-color-secondary: var(--ink-500);
   --el-text-color-placeholder: var(--ink-300);
 
-  --el-border-color: var(--line-2);
+  --el-border-color: var(--line-1);
   --el-border-color-light: var(--line-1);
-  --el-border-color-lighter: var(--line-1);
+  --el-border-color-lighter: var(--line-2);
   --el-border-color-extra-light: var(--surface-2);
 
   --el-fill-color: var(--surface-2);
-  --el-fill-color-light: var(--surface-1);
-  --el-fill-color-lighter: var(--surface-1);
+  --el-fill-color-light: var(--surface-2);
+  --el-fill-color-lighter: var(--surface-2);
   --el-fill-color-blank: var(--surface-0);
 
   --el-bg-color: var(--surface-0);
   --el-bg-color-page: var(--surface-1);
   --el-bg-color-overlay: var(--surface-0);
+
+  /* 深色主题下 EP 的几个「浅色假设」变量必须一并改掉，否则遮罩是白的、
+     禁用态是浅灰的、hover 边框比静止态还暗 */
+  --el-mask-color: rgba(3, 6, 10, 0.7);
+  --el-border-color-hover: #4a5464;
+  --el-border-color-darker: var(--line-1);
+  --el-fill-color-dark: var(--surface-3);
+  --el-fill-color-darker: var(--surface-3);
+  --el-disabled-bg-color: var(--surface-2);
+  --el-disabled-text-color: var(--ink-300);
+  --el-disabled-border-color: var(--line-2);
+
+  --el-table-border-color: var(--line-1);
+  --el-table-header-bg-color: var(--surface-2);
+  --el-table-header-text-color: var(--ink-500);
+  --el-table-text-color: var(--ink-700);
+  --el-table-row-hover-bg-color: var(--surface-2);
+  --el-table-bg-color: transparent;
+  --el-table-tr-bg-color: transparent;
+
+  /*
+   * 骨架屏的填充色 EP 定义在 .el-skeleton 上，但取值指向 --el-fill-color /
+   * --el-fill-color-darker，改上面那两个已经跟着变暗，这里只是写明确。
+   */
+  --el-skeleton-color: var(--surface-2);
+  --el-skeleton-to-color: var(--surface-3);
 
   --el-border-radius-base: var(--r-sm);
   --el-border-radius-small: 4px;
@@ -134,9 +218,58 @@
   --el-font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', 'PingFang SC',
     'Microsoft YaHei', sans-serif;
 
-  /* 阴影统一走我们的层级，避免 EP 自带的偏重阴影破坏观感 */
+  /* 阴影统一走我们的层级 */
   --el-box-shadow-light: var(--sh-sm);
   --el-box-shadow: var(--sh-md);
+}
+
+/*
+ * 2b. EP 在彩色底上写死的白字
+ *
+ * EP 把这些位置的文字色统一写死成 var(--el-color-white)：主按钮、
+ * 选中态单选按钮、勾选框的勾。浅色主题下主色是深蓝 #409eff，白字没问题；
+ * 我们的主色是亮青 #00d4ff，白字只有 1.8:1，现场投屏基本读不出来。
+ *
+ * 这里只改**用到的这三个组件**的对应变量，不去动 --el-color-white 本身：
+ * 那个变量同时被当作浅色面板底色（.el-alert 的默认底就是它），
+ * 全局改掉会把别的地方一起翻黑。
+ */
+.el-button--primary {
+  --el-button-text-color: var(--on-brand);
+  --el-button-hover-text-color: var(--on-brand);
+  --el-button-active-text-color: var(--on-brand);
+  /* EP 的禁用态是「把主色降到 50% 透明度」，在深色底上会变成一块发闷的
+     蓝绿玻璃，仍然像可点的。换成中性面 + 弱化文字，才是明确的「不可用」 */
+  --el-button-disabled-bg-color: var(--surface-3);
+  --el-button-disabled-border-color: var(--surface-3);
+  --el-button-disabled-text-color: var(--ink-300);
+}
+
+.el-radio-button {
+  --el-radio-button-checked-text-color: var(--on-brand);
+}
+
+.el-checkbox {
+  --el-checkbox-checked-icon-color: var(--on-brand);
+}
+
+/*
+ * el-empty 的插画是一张写死色阶的 SVG，那组 --el-empty-fill-color-* 定义在
+ * .el-empty 自己身上（不是 :root），所以要在这里盖。默认值是 #fcfcfd 起步的
+ * 近白色阶，深色页面上会凭空出现一大块白。这里换成比底色略暗的一组，
+ * 让它退回成背景里的一层水印。
+ */
+.el-empty {
+  --el-empty-fill-color-0: var(--surface-1);
+  --el-empty-fill-color-1: #2b323d;
+  --el-empty-fill-color-2: #232a34;
+  --el-empty-fill-color-3: #1c2330;
+  --el-empty-fill-color-4: #262d3a;
+  --el-empty-fill-color-5: #1e2531;
+  --el-empty-fill-color-6: #212834;
+  --el-empty-fill-color-7: #1a212b;
+  --el-empty-fill-color-8: #1c2330;
+  --el-empty-fill-color-9: var(--surface-0);
 }
 
 /* ================================================================ 3. 基础层 */
@@ -163,21 +296,21 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* 滚动条：默认样式在浅色底上过于抢眼 */
+/* 滚动条：深色主题下更细更暗 */
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
 }
 ::-webkit-scrollbar-thumb {
   background: var(--surface-3);
   background-clip: padding-box;
-  border: 3px solid transparent;
+  border: 2px solid transparent;
   border-radius: var(--r-pill);
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #c9cdd4;
+  background: #3d4757;
   background-clip: padding-box;
-  border: 3px solid transparent;
+  border: 2px solid transparent;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
@@ -255,8 +388,8 @@ body {
   margin: 0.8em 0;
   padding: 0.5em 1em;
   color: var(--ink-500);
-  background: var(--surface-1);
-  border-left: 3px solid var(--brand-200);
+  background: var(--surface-2);
+  border-left: 3px solid var(--brand-400);
   border-radius: 0 var(--r-sm) var(--r-sm) 0;
 }
 
@@ -264,22 +397,25 @@ body {
   padding: 0.15em 0.4em;
   font-family: 'JetBrains Mono', Consolas, Menlo, monospace;
   font-size: 0.88em;
-  color: var(--brand-700);
-  background: var(--brand-50);
+  color: var(--brand-400);
+  background: rgba(0, 212, 255, 0.08);
   border-radius: 4px;
 }
 
+/* 代码块比正文底更亮一档：助手答案现在直接铺在页面底（无气泡），
+   代码块若用页面同色就糊在一起，看不出边界 */
 .markdown-body pre {
   margin: 0.8em 0;
   padding: 14px 16px;
   overflow-x: auto;
   background: #1e222a;
+  border: 1px solid var(--line-1);
   border-radius: var(--r-md);
 }
 /* 代码块里的行内 code 要清掉浅色底，否则与深色背景冲突 */
 .markdown-body pre code {
   padding: 0;
-  color: #abb2bf;
+  color: #c9d1d9;
   background: transparent;
   border-radius: 0;
 }
@@ -303,7 +439,7 @@ body {
 .markdown-body th {
   font-weight: 600;
   color: var(--ink-700);
-  background: var(--surface-1);
+  background: var(--surface-2);
 }
 .markdown-body tr:last-child td {
   border-bottom: none;
@@ -349,20 +485,21 @@ body {
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   line-height: 1;
-  color: var(--brand-600);
-  background: var(--brand-50);
-  border: 1px solid var(--brand-100);
+  color: var(--brand-400);
+  background: rgba(0, 212, 255, 0.1);
+  border: 1px solid rgba(0, 212, 255, 0.25);
   border-radius: 4px;
   cursor: pointer;
   user-select: none;
   vertical-align: super;
   transition: background 0.15s var(--ease), color 0.15s var(--ease),
-    border-color 0.15s var(--ease);
+    border-color 0.15s var(--ease), box-shadow 0.15s var(--ease);
 }
 .cite-ref:hover {
-  color: #fff;
-  background: var(--brand-600);
-  border-color: var(--brand-600);
+  color: #0d1117;
+  background: var(--brand-400);
+  border-color: var(--brand-400);
+  box-shadow: 0 0 8px rgba(0, 212, 255, 0.4);
 }
 
 /* --------------------------------------------------------------- 流式光标 */
@@ -389,6 +526,87 @@ body {
 }
 
 /* ---------------------------------------------------------------- 工具类 */
+.glass {
+  background: rgba(22, 27, 34, 0.7);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(0, 212, 255, 0.15);
+  box-shadow: 0 0 20px rgba(0, 212, 255, 0.04);
+}
+
+/*
+ * LED 状态灯：工业仪表盘的主要状态语言。
+ * 三层叠加 —— 实心圆点（本体）+ 光晕（第一层 box-shadow）+ 外圈暗环（第二层，
+ * 少了它圆点在深色底上会显得「浮」）。
+ * 色调由 --led / --led-ring 两个变量给出（不用 color-mix：现场机器的浏览器版本
+ * 不可控，宁可用两个变量也不赌新语法）。
+ */
+.led {
+  --led: var(--ink-400);
+  --led-ring: rgba(139, 148, 158, 0.18);
+
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  background: var(--led);
+  border-radius: 50%;
+  box-shadow: 0 0 6px var(--led), 0 0 0 2px var(--led-ring);
+}
+
+.led--ok {
+  --led: var(--ok-600);
+  --led-ring: rgba(45, 212, 191, 0.18);
+}
+.led--warn {
+  --led: var(--warn-600);
+  --led-ring: rgba(251, 191, 36, 0.18);
+}
+.led--danger {
+  --led: var(--danger-600);
+  --led-ring: rgba(248, 113, 113, 0.18);
+}
+.led--brand {
+  --led: var(--brand-600);
+  --led-ring: rgba(0, 212, 255, 0.18);
+}
+.led--idle {
+  --led: var(--ink-300);
+  --led-ring: rgba(110, 118, 129, 0.16);
+}
+
+/* 只有「正在运行 / 正常」才闪：状态灯全都在动就等于都不在动 */
+.led--pulse {
+  animation: led-pulse 2s ease-in-out infinite;
+}
+
+@keyframes led-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+/*
+ * 扫描线纹理：给大块深色面一点「仪表屏」质感。
+ * 用 repeating-linear-gradient 而不是贴图（零请求），白线透明度压到 1.2%——
+ * 在正文上肉眼不可辨，只在纯色大面积上能感觉到一层极淡的横向纹理。
+ * 必须 pointer-events: none，否则会吃掉整页的鼠标事件。
+ */
+.scanlines::before {
+  position: absolute;
+  inset: 0;
+  content: '';
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.012) 0 1px,
+    transparent 1px 3px
+  );
+}
+
 .text-secondary {
   color: var(--ink-500);
 }

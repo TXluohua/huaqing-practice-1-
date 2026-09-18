@@ -215,6 +215,7 @@ onBeforeUnmount(() => {
             </el-button>
             <el-button
               v-else
+              class="composer__send"
               type="primary"
               :icon="Promotion"
               :disabled="!canSend"
@@ -274,19 +275,22 @@ onBeforeUnmount(() => {
 }
 
 /* ------------------------------------------------------------------ 卡片 */
+/* 深色玻璃底 + 内阴影：内阴影让输入框看起来是「凹进面板的一块屏幕」，
+   与凸起的按钮形成方向对比，这是仪表盘上常见的物理隐喻 */
 .composer__card {
   padding: var(--sp-2) var(--sp-3) var(--sp-2);
-  background: var(--surface-0);
-  border: 1px solid var(--line-2);
+  background: rgba(22, 27, 34, 0.72);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(0, 212, 255, 0.16);
   border-radius: var(--r-lg);
-  box-shadow: var(--sh-md);
+  box-shadow: inset 0 1px 0 rgba(0, 0, 0, 0.35), var(--sh-md);
   transition: border-color 0.18s var(--ease), box-shadow 0.18s var(--ease);
 }
 
 /* 聚焦时整卡高亮，而不是给 textarea 画一圈内边框 */
 .composer__card--focus {
-  border-color: var(--brand-400);
-  box-shadow: var(--sh-md), 0 0 0 3px rgb(37 99 235 / 10%);
+  border-color: rgba(0, 212, 255, 0.55);
+  box-shadow: inset 0 1px 0 rgba(0, 0, 0, 0.35), var(--sh-md), var(--glow-2);
 }
 
 /* 去掉 EP textarea 自带的边框与内阴影，让卡片成为唯一视觉边界 */
@@ -373,6 +377,30 @@ onBeforeUnmount(() => {
 .composer__count--over {
   font-weight: 600;
   color: var(--danger-600);
+}
+
+/* 发送按钮：整页唯一一处实心青蓝，pill 形。
+   刻意压掉 EP 的 --el-button-* 背景 —— 这个按钮是主行动，用渐变实底而不是
+   24% 透明度的 plain 样式，扫视时才能立刻定位到「回车提交」这个动作。
+   disabled 态必须显式写：本类的选择器带 scoped 属性，特异性高于
+   .el-button.is-disabled，不写就会让禁用按钮也保持亮青色。 */
+.composer__send {
+  border: none;
+  border-radius: var(--r-pill);
+  background-image: linear-gradient(140deg, #00d4ff, #0066ff);
+  box-shadow: 0 2px 10px rgba(0, 212, 255, 0.25);
+}
+
+.composer__send:hover:not(.is-disabled) {
+  background-image: linear-gradient(140deg, #33ddff, #1a7bff);
+  box-shadow: 0 2px 14px rgba(0, 212, 255, 0.4);
+}
+
+.composer__send.is-disabled {
+  color: var(--ink-300);
+  background-image: none;
+  background-color: var(--surface-3);
+  box-shadow: none;
 }
 
 .composer__badge {

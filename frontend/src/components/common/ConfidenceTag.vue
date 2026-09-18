@@ -94,20 +94,20 @@ const tooltip = computed(() =>
 .conf--high {
   color: var(--ok-600);
   background: var(--ok-50);
-  border-color: #cbeed7;
+  border-color: rgba(45, 212, 191, 0.3);
 }
 
 /* 中置信度用琥珀色：它要求用户采取额外动作（人工复核），必须比「高」更醒目 */
 .conf--medium {
   color: var(--warn-600);
   background: var(--warn-50);
-  border-color: #f3e0b8;
+  border-color: rgba(251, 191, 36, 0.35);
 }
 
 .conf--low {
   color: var(--info-600);
   background: var(--info-50);
-  border-color: #e0e4ea;
+  border-color: rgba(139, 148, 158, 0.28);
 }
 
 .conf--unknown {

@@ -132,8 +132,8 @@ const snippet = computed(() => {
 }
 
 .cite:hover {
-  border-color: var(--brand-200);
-  box-shadow: var(--sh-md);
+  border-color: rgba(0, 212, 255, 0.45);
+  box-shadow: var(--sh-md), var(--glow-2);
   transform: translateY(-1px);
 }
 
@@ -144,7 +144,7 @@ const snippet = computed(() => {
 .cite:focus-visible {
   border-color: var(--brand-400);
   outline: none;
-  box-shadow: 0 0 0 3px rgb(37 99 235 / 12%);
+  box-shadow: var(--ring-brand);
 }
 
 /* ------------------------------------------------------------------ 头部 */
@@ -155,7 +155,9 @@ const snippet = computed(() => {
   margin-bottom: 7px;
 }
 
-/* 编号用实心方块而非 [n] 文本：与正文里的角标呼应，但更醒目 */
+/* 编号用实心方块而非 [n] 文本：与正文里的角标呼应，但更醒目。
+   青底上用近黑的字而不是白字 —— 白色压在 #00d4ff 上对比度只有 1.9:1，
+   现场投屏时基本糊成一团 */
 .cite__badge {
   display: inline-flex;
   flex: 0 0 auto;
@@ -165,8 +167,8 @@ const snippet = computed(() => {
   height: 19px;
   padding: 0 5px;
   font-size: 11px;
-  font-weight: 600;
-  color: #fff;
+  font-weight: 700;
+  color: #04121a;
   background: var(--brand-600);
   border-radius: 5px;
 }

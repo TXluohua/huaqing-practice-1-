@@ -64,22 +64,24 @@ const meta = computed(() => {
   border-radius: 50%;
 }
 
+/* 描边用语义色的低透明度而不是另配一支浅色：深色底上浅色描边会跳出来抢焦点，
+   这里的文字色已经足够区分三种状态 */
 .stat--ok {
   color: var(--ok-600);
   background: var(--ok-50);
-  border-color: #cbeed7;
+  border-color: rgba(45, 212, 191, 0.3);
 }
 
 /* 拒答用中性灰：它是「如实说不知道」，与红色的链路故障必须区分 */
 .stat--notcovered {
   color: var(--info-600);
   background: var(--info-50);
-  border-color: #e0e4ea;
+  border-color: rgba(139, 148, 158, 0.28);
 }
 
 .stat--error {
   color: var(--danger-600);
   background: var(--danger-50);
-  border-color: #f7d4d1;
+  border-color: rgba(248, 113, 113, 0.32);
 }
 </style>

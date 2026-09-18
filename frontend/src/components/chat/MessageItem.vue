@@ -8,7 +8,8 @@
  * 2. **用户消息不走 markdown**，纯文本 `pre-wrap`。用户输入的 `<b>` 应当原样显示，
  *    而且用户消息里也没有引用角标需要处理。
  *
- * 视觉分工：助手消息是白卡片（承载正文与引用清单），用户消息是右侧主色气泡。
+ * 视觉分工：助手消息**不套气泡**，正文直接全宽铺在页面底上（答案常含参数表与
+ * 代码块，再套一层卡片会层层缩进）；用户消息是右侧窄的青色玻璃气泡。
  * 两者样式差别足够大，扫一眼就知道哪句是自己问的。
  *
  * 性能说明：流式期间每来一个 token 就重渲染整段 markdown，复杂度是 O(n²)。
@@ -286,9 +287,10 @@ async function copyAnswer(): Promise<void> {
 }
 
 .msg__avatar--ai {
-  color: #fff;
-  background: linear-gradient(140deg, var(--brand-500), var(--brand-700));
-  box-shadow: 0 2px 6px rgb(37 99 235 / 22%);
+  color: #04121a;
+  /* 与顶栏品牌标记同一支渐变，两处标记一眼是同一个系统 */
+  background: linear-gradient(140deg, #00d4ff, #0066ff);
+  box-shadow: 0 2px 10px rgba(0, 212, 255, 0.28);
 }
 
 .msg__avatar--user {
@@ -299,8 +301,8 @@ async function copyAnswer(): Promise<void> {
 
 /* -------------------------------------------------------------------- 主体 */
 /*
- * 助手侧必须 flex: 1：卡片是 width:100%，若父元素宽度由内容决定，
- * 卡片的 100% 就成了一道循环引用，宽屏下会明显窄于对话列宽。
+ * 助手侧必须 flex: 1：正文容器是 width:100%，若父元素宽度由内容决定，
+ * 这个 100% 就成了一道循环引用，宽屏下会明显窄于对话列宽。
  * 用户侧反过来要按内容收缩（flex: 0 1 auto），只靠 max-width 限制最宽。
  */
 .msg__body {
@@ -317,33 +319,45 @@ async function copyAnswer(): Promise<void> {
   max-width: 76%;
 }
 
-/* 助手消息：白卡片承载正文，与页面的浅灰底形成层次 */
+/* 助手消息**不套气泡**：答案经常包含参数表、步骤列表、代码块，
+   装进卡片会让内层元素再缩一圈，长答案读起来像层层嵌套。
+   正文直接铺在页面底上，宽度全部让给内容。 */
 .msg__card {
   width: 100%;
-  padding: var(--sp-4) var(--sp-5);
-  background: var(--surface-0);
-  border: 1px solid var(--line-1);
-  border-radius: var(--r-lg);
-  box-shadow: var(--sh-xs);
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
 }
 
+/* 等待态没有正文可铺，单独给它一块玻璃底，避免只剩三个点在页面底上飘 */
 .msg__card--pending {
   display: flex;
   align-items: center;
   gap: 10px;
+  width: fit-content;
+  padding: 10px var(--sp-4);
   font-size: var(--fs-sm);
   color: var(--ink-400);
+  background: rgba(22, 27, 34, 0.7);
+  border: 1px solid rgba(0, 212, 255, 0.12);
+  border-radius: var(--r-md);
 }
 
 /* ------------------------------------------------------------------ 气泡 */
+/* 用户消息用深色玻璃底 + 青色左边框，不用实心主色块：
+   一屏里助手的长答案才是主体，用户那两三行若铺满青蓝会持续抢注意力 */
 .msg__bubble {
   padding: 10px var(--sp-4);
   font-size: var(--fs-md);
   line-height: 1.65;
-  color: #fff;
-  background: linear-gradient(140deg, var(--brand-500), var(--brand-600));
-  border-radius: var(--r-lg) var(--r-lg) 4px var(--r-lg);
-  box-shadow: 0 2px 8px rgb(37 99 235 / 18%);
+  color: var(--ink-900);
+  background: rgba(0, 212, 255, 0.08);
+  border: 1px solid rgba(0, 212, 255, 0.18);
+  border-left: 3px solid var(--brand-600);
+  border-radius: var(--r-md);
+  box-shadow: var(--glow-3);
 }
 
 .msg__stamp {
@@ -392,9 +406,9 @@ async function copyAnswer(): Promise<void> {
   }
 }
 
+/* 光标原先是补在 .msg__card 的内边距之后对齐的，卡片去掉内边距后归零 */
 .msg__caret-row {
   margin-top: -6px;
-  padding-left: var(--sp-5);
 }
 
 .msg__hint {
@@ -413,17 +427,19 @@ async function copyAnswer(): Promise<void> {
   border-radius: var(--r-md);
 }
 
+/* 提示条底色是 10% 的语义色，在深色底上已经够轻，描边再压一档：
+   描边的作用只是把这条提示和正文分开，不是强调它的严重程度 */
 .msg__note--info {
   background: var(--info-50);
-  border-color: #e3e7ee;
+  border-color: rgba(139, 148, 158, 0.28);
 }
 .msg__note--warn {
   background: var(--warn-50);
-  border-color: #f5e3c0;
+  border-color: rgba(251, 191, 36, 0.3);
 }
 .msg__note--error {
   background: var(--danger-50);
-  border-color: #f7d4d1;
+  border-color: rgba(248, 113, 113, 0.32);
 }
 
 .msg__note-title {
@@ -489,9 +505,10 @@ async function copyAnswer(): Promise<void> {
 
 .msg__image-chip {
   padding: 2px 7px;
+  font-family: 'JetBrains Mono', Consolas, Menlo, monospace;
   font-size: 11px;
   color: var(--ink-700);
-  background: rgb(255 255 255 / 80%);
+  background: rgba(0, 0, 0, 0.28);
   border: 1px solid var(--brand-100);
   border-radius: var(--r-sm);
 }
@@ -501,7 +518,7 @@ async function copyAnswer(): Promise<void> {
   width: 100%;
   padding: 10px var(--sp-4);
   background: var(--warn-50);
-  border: 1px solid #f5e3c0;
+  border: 1px solid rgba(251, 191, 36, 0.3);
   border-radius: var(--r-md);
 }
 
