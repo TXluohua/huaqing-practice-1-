@@ -320,6 +320,141 @@ def anchor_check(
     )
 
 
+# --------------------------------------------------------------------------- #
+# 引用归属（LLM 路径的覆盖率保障）
+# --------------------------------------------------------------------------- #
+
+
+#: 归一化时去掉空白与标点（\W 在 Unicode 模式下不会吃掉中文，只去标点/空白）
+_NORM_PUNCT_RE = re.compile(r"[\W_]+")
+
+
+def _normalize_for_match(text: str) -> str:
+    return _NORM_PUNCT_RE.sub("", (text or "").lower())
+
+
+def _bigrams(text: str) -> set[str]:
+    return {text[i : i + 2] for i in range(len(text) - 1)} if len(text) > 1 else {text}
+
+
+def _bigram_overlap(text: str, other: str) -> float:
+    """字符二元组重合度（中文下比词重合更稳，且不依赖分词器）。"""
+
+    a = _bigrams(_normalize_for_match(text))
+    b = _bigrams(_normalize_for_match(other))
+    if not a:
+        return 0.0
+    return len(a & b) / len(a)
+
+
+def best_supporting_block(
+    sentence: str,
+    blocks: Sequence[Evidence],
+    *,
+    threshold: float,
+) -> int | None:
+    """给一句结论找最匹配的上下文块，返回其 1-based 编号；不达标返回 None。"""
+
+    best_index, best_score = None, 0.0
+    for index, block in enumerate(blocks, start=1):
+        score = _bigram_overlap(sentence, block.text)
+        if score > best_score:
+            best_index, best_score = index, score
+    if best_index is None or best_score < threshold:
+        return None
+    return best_index
+
+
+def _attach_citation(sentence: str, index: int) -> str:
+    """把引用编号插到句末标点**之前**（否则按标点切句会把引用与结论句拆开）。"""
+
+    stripped = sentence.rstrip()
+    match = re.search(r"([。！？!?；;]+)$", stripped)
+    if match:
+        tail = match.group(1)
+        body = stripped[: -len(tail)]
+        return f"{body} [{index}]{tail}"
+    return f"{stripped} [{index}]"
+
+
+def enforce_citations(
+    answer: str,
+    blocks: Sequence[Evidence],
+    *,
+    threshold: float = 0.45,
+) -> tuple[str, dict[str, Any]]:
+    """让每条结论句都带上引用：代码补引用，补不上的句子**直接省略**。
+
+    为什么需要（实测缺陷 #10）
+    --------------------------
+    `verify` 在高置信度下要求引用覆盖率 100%，而这个门槛原先只有**抽句式**路径能天然满足
+    （那条路径由代码给每句分配编号）。换成真 LLM 后，提示词只能「尽量」逐句挂引用，
+    实测落在 78%~94% —— 于是本来答得不错的回答被硬闸门整条拒答，
+    结果就是「覆盖率 100% 是靠拒答不达标的回答维持的」。
+
+    本函数把「挂引用」从模型的自觉变成**代码保证**：
+      1. 已有引用的句子：不动；
+      2. 没有引用但有依据的句子：按字符二元组重合度归属到最匹配的上下文块，补上编号；
+      3. 归属不上的句子：**不输出**（宁可不答这一句，也不给没有依据的结论）。
+
+    这样「引用覆盖率 100%」恢复成它本来的含义：**发出去的每一条结论都有依据**。
+
+    返回 (新答案, 统计)。统计里 `dropped_sentences` 供可观测与人工复核。
+    """
+
+    stats: dict[str, Any] = {
+        "threshold": threshold,
+        "attributed": 0,
+        "kept": 0,
+        "dropped": 0,
+        "dropped_sentences": [],
+    }
+    if not (answer or "").strip() or not blocks:
+        return answer, stats
+
+    out_lines: list[str] = []
+    for line in answer.split("\n"):
+        stripped_line = line.strip()
+        if not stripped_line:
+            out_lines.append(line)
+            continue
+        # 非结论行（标题、依据清单、表格、代码块等）原样保留
+        if not is_claim_sentence(stripped_line):
+            out_lines.append(line)
+            continue
+
+        pieces = split_sentences(stripped_line)
+        if not pieces:
+            out_lines.append(line)
+            continue
+
+        kept_pieces: list[str] = []
+        for piece in pieces:
+            if not is_claim_sentence(piece):
+                kept_pieces.append(piece)
+                continue
+            if parse_citation_ids(piece):
+                kept_pieces.append(piece)
+                stats["kept"] += 1
+                continue
+            index = best_supporting_block(piece, blocks, threshold=threshold)
+            if index is None:
+                stats["dropped"] += 1
+                if len(stats["dropped_sentences"]) < 5:
+                    stats["dropped_sentences"].append(piece.strip()[:80])
+                continue
+            kept_pieces.append(_attach_citation(piece, index))
+            stats["attributed"] += 1
+
+        if not kept_pieces:
+            # 整行都是无依据的结论 → 整行不算（不留空壳列表项）
+            continue
+        prefix = line[: len(line) - len(line.lstrip())] if line.lstrip().startswith(("-", "*", "1", "2", "3", "4", "5", "6", "7", "8", "9")) else line[: len(line) - len(line.lstrip())]
+        out_lines.append(prefix + "".join(kept_pieces))
+
+    return "\n".join(out_lines).strip(), stats
+
+
 def authority_score(
     blocks: Sequence[Evidence],
     *,
@@ -493,6 +628,8 @@ __all__ = [
     "RejectionDecision",
     "anchor_check",
     "authority_score",
+    "best_supporting_block",
+    "enforce_citations",
     "build_not_covered_answer",
     "build_uncertain_notes",
     "check_citations",

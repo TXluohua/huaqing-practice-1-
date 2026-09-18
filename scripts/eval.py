@@ -109,6 +109,8 @@ class ItemResult:
     answer_points_hit_strict: int = 0
     n_citations: int = 0
     rerank_provider: str = ""
+    #: 本次检索是否用到了外部数据源（备件台账 / 工单 MCP）—— 决定延迟按哪条预算看
+    external_used: bool = False
     top5_hit: float = 0.0
     reciprocal_rank: float = 0.0
     ndcg5: float = 0.0
@@ -138,6 +140,7 @@ class ItemResult:
             "answer_points_strict": f"{self.answer_points_hit_strict}/{self.answer_points_total}",
             "n_citations": self.n_citations,
             "rerank_provider": self.rerank_provider,
+            "external_used": self.external_used,
             "retrieved_sections": self.retrieved_sections,
             "answer_head": self.answer_head,
             "notes": self.notes,
@@ -177,11 +180,23 @@ def evaluate_item(item: dict[str, Any], result: dict[str, Any], latency_s: float
     labels = [parse_must_cite(entry) for entry in (item.get("must_cite") or [])]
     out.labels = [f"{doc}#{sec}" for doc, sec in labels]
 
+    # 外部源（备件库存台账 / 历史工单）不算 kb_doc：它们不在语料里，但同样是有效证据。
+    # golden 条目用 allow_external_sources 显式声明「这一题允许外部源作答」。
+    allow_external = bool(item.get("allow_external_sources"))
+
+    def _is_external(meta: dict) -> bool:
+        source_type = str(meta.get("source_type") or "kb_doc")
+        doc_title = str(meta.get("doc_title") or "")
+        return source_type != "kb_doc" or "台账" in doc_title or "工单" in doc_title
+
     graded: list[int] = []
     for evidence in ranked:
         meta = evidence.metadata or {}
         pair = (str(meta.get("doc_title", "")), str(meta.get("section", "")))
-        graded.append(1 if pair in labels else 0)
+        relevant = pair in labels or (allow_external and _is_external(meta))
+        if _is_external(meta):
+            out.external_used = True
+        graded.append(1 if relevant else 0)
     out.retrieved_sections = [
         f"{(e.metadata or {}).get('doc_title', '')}#{(e.metadata or {}).get('section', '')}"
         for e in ranked[:5]
@@ -322,6 +337,12 @@ def print_summary(summary: dict[str, Any], results: Sequence[ItemResult]) -> Non
         f"／预热 {summary['warmup_s']}s（模型加载，生产由 lifespan 承担）"
     )
     print(
+        f"  分路径：纯文档 {summary['latency_p95_doc_only_s']}s（目标 ≤ 8s，"
+        f"{len(results) - summary['n_external_items']} 条）"
+        f"／带外部源 {summary['latency_p95_external_s']}s（目标 ≤ 15s，"
+        f"{summary['n_external_items']} 条：备件台账或工单 MCP）"
+    )
+    print(
         "  注：首 Token 指标按已修订的 NFR-01 计（≤ 8s）。本实现「先过 verify 再出字」，"
         "首 Token ≈ 整条链路耗时，因此以上 P95 即首 Token 的上界。"
     )
@@ -457,11 +478,26 @@ async def run(args: argparse.Namespace) -> int:
         results.append(evaluate_item(item, result, latency))
 
     latencies = [r.latency_s for r in results if r.status != "ERROR"]
-    p95 = statistics.quantiles(latencies, n=20)[-1] if len(latencies) >= 20 else (
-        max(latencies) if latencies else 0.0
-    )
+    # 延迟按路径拆分：纯文档链路走 NFR-01 的 ≤8s；带外部源（备件台账/工单）的走慢路径预算。
+    # 拆开统计是为了让「外部查询的额外成本」可见，而不是把它混进文字类 P95 里稀释掉。
+    doc_only = [r.latency_s for r in results if r.status != "ERROR" and not r.external_used]
+    external = [r.latency_s for r in results if r.status != "ERROR" and r.external_used]
+
+    def _p95(values: list[float]) -> float:
+        if not values:
+            return 0.0
+        if len(values) >= 20:
+            return statistics.quantiles(values, n=20)[-1]
+        return max(values)
+
+    p95 = _p95(latencies)
+    p95_doc = _p95(doc_only)
+    p95_ext = _p95(external)
     summary = summarize(results, latency_p95=p95)
     summary["warmup_s"] = round(warmup_s, 3)
+    summary["latency_p95_doc_only_s"] = round(p95_doc, 3)
+    summary["latency_p95_external_s"] = round(p95_ext, 3)
+    summary["n_external_items"] = len(external)
     print_summary(summary, results)
 
     report_path = args.out or (ROOT / "data" / "eval" / f"report_{datetime.now():%Y%m%d_%H%M%S}.json")

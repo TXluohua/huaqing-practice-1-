@@ -30,7 +30,7 @@ from backend.rag.ingest import (  # noqa: E402
     iter_raw_documents,
     validate_metadata,
 )
-from backend.rag.store import get_store, reset_store  # noqa: E402
+from backend.rag.store import get_store, rebuild_store, reset_store  # noqa: E402
 from backend.setting import get_settings  # noqa: E402
 
 
@@ -56,12 +56,14 @@ async def ingest_all(
     chunk_overlap: int | None = None,
     require_complete_metadata: bool = True,
 ) -> IngestReport:
-    """把指定文档入库；rebuild=True 时先清空索引（scripts/build_index.py 复用）。"""
+    """把指定文档入库；rebuild=True 时先清空索引（scripts/build_index.py 复用）。
+
+    rebuild=True 走 `rebuild_store()`：它**不做签名校验**，因此换 embedding 模型后
+    也能一键重建 —— 否则旧索引签名不匹配会把重建脚本本身挡住（实测缺陷 #9）。
+    """
 
     started = time.perf_counter()
-    store = await get_store()
-    if rebuild:
-        await store.reset()
+    store = await (rebuild_store() if rebuild else get_store())
 
     report = IngestReport()
     all_chunks: list[Chunk] = []
