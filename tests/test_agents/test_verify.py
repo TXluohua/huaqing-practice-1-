@@ -146,6 +146,41 @@ def test_generate_fallback_attaches_citation_to_every_sentence() -> None:
     assert check.coverage == 1.0
 
 
+# --------------------------------------------------------------------------- #
+# 多轮追问（FR-01 / FR-06）：锚点校验不能拿指代句的字面词去卡
+# --------------------------------------------------------------------------- #
+FOLLOWUP_HISTORY = [
+    {"role": "user", "content": "刻蚀机腔体真空度异常怎么排查？"},
+    {"role": "assistant", "content": "1. 检查腔体密封 O-ring [1]。"},
+]
+
+
+def test_verify_followup_uses_resolved_query_for_anchor() -> None:
+    """指代句（「你刚才说的第一步」）本身与材料没有词面交集，但检索式已补全 → 不应误拒。"""
+
+    state = state_with(
+        answer="腔体真空度出现异常波动时，按顺序逐项排查：先检查腔体密封 O-ring [1]。",
+        blocks=BLOCKS,
+        question="你刚才说的第一步是什么？",
+    )
+    state["history"] = FOLLOWUP_HISTORY
+    state["queries"] = ["刻蚀机腔体真空度异常怎么排查？ 你刚才说的第一步是什么？"]
+    result = asyncio.run(verify(state))
+    assert result["status"] == "OK", result["uncertain"]
+    assert result["citations"], "追问的正常回答也必须有引用"
+
+
+def test_verify_followup_rejection_gives_actionable_hint() -> None:
+    """追问被拒时要告诉用户「补上具体部件名称」，而不是只丢一句未覆盖。"""
+
+    state = state_with(answer="", blocks=[], question="那它的更换周期是多少？")
+    state["history"] = FOLLOWUP_HISTORY
+    state["queries"] = ["刻蚀机腔体真空度异常怎么排查？ 那它的更换周期是多少？"]
+    result = asyncio.run(verify(state))
+    assert result["status"] == "NOT_COVERED"
+    assert any("补上具体部件或参数名称" in note for note in result["uncertain"]), result["uncertain"]
+
+
 if __name__ == "__main__":  # pragma: no cover - 无 pytest 时的兜底运行入口
     import traceback
 

@@ -41,7 +41,7 @@ from ...tools.kb_tools import kb_corpus_text
 from ...setting import get_settings
 from ..state import AgentState, Evidence
 from . import NodeName, register_node
-from .retrieval import normalized_top_score, sufficiency_threshold
+from .retrieval import looks_like_followup, normalized_top_score, sufficiency_threshold
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +112,7 @@ def _extractive_answer(
     *,
     mode: str,
     question: str = "",
+    focus_query: str | None = None,
     max_sentences: int = 6,
 ) -> tuple[str, dict[str, Any]]:
     """抽句式降级答案：只用上下文原句，逐句挂 [n]。
@@ -125,7 +126,10 @@ def _extractive_answer(
     因为句子全部来自检索到的原文、编号由代码分配，本路径天然不编造。
     """
 
-    question_tokens = {t for t in re.sub(r"\s+", "", question)}
+    # 打分用「检索意图」而不是字面问题：追问（"你刚才说的第一步是什么？"）的字面
+    # 词在知识库里一个都不存在，用它打分只能抽到无关句子；用补全后的检索式打分，
+    # 才能真正落到上一轮讨论的那一节。
+    question_tokens = {t for t in re.sub(r"\s+", "", focus_query or question)}
     candidates: list[tuple[float, int, str, str]] = []
     for index, block in enumerate(blocks, start=1):
         meta = block.metadata or {}
@@ -143,13 +147,15 @@ def _extractive_answer(
 
     lines: list[str] = []
     if mode == "training":
-        lines.append("**基础理解**（依据检索到的原文整理）")
+        # 结构行只写粗体标题：citation 会把「整行粗体」识别为标题而非结论句
+        lines.append("**基础理解**")
     for _, index, sentence, _source in picked:
         body = sentence.rstrip("。！？!?；;，,")
         lines.append(f"- {body} [{index}]。")
     if mode == "training":
         lines.append("")
-        lines.append("**操作要点**：以上内容摘自知识库原文，现场作业请以设备实际型号与版本为准。")
+        lines.append("**操作要点**")
+        lines.append("以上内容摘自知识库原文，现场作业请以设备实际型号与版本为准。")
 
     # 文末依据清单（非结论句，verify 不计入覆盖率分母）
     lines.append("")
@@ -234,6 +240,7 @@ async def generate(state: AgentState) -> dict[str, Any]:
     context = state.get("context") or ""
     blocks = list(state.get("context_blocks") or [])
     mode = str(state.get("answer_mode") or "qa")
+    focus = " ".join(str(q) for q in (state.get("queries") or []) if str(q).strip()).strip()
     errors: list[str] = []
 
     if not blocks:
@@ -262,9 +269,13 @@ async def generate(state: AgentState) -> dict[str, Any]:
         except Exception as exc:  # noqa: BLE001 - 调用失败必须降级，不中断链路
             logger.warning("LLM 调用失败（%s），降级为抽句式答案", exc)
             errors.append(f"LLM 调用失败已降级为抽句式答案：{exc}")
-            answer, structured = _extractive_answer(blocks, mode=mode, question=question)
+            answer, structured = _extractive_answer(
+                blocks, mode=mode, question=question, focus_query=focus
+            )
     else:
-        answer, structured = _extractive_answer(blocks, mode=mode, question=question)
+        answer, structured = _extractive_answer(
+            blocks, mode=mode, question=question, focus_query=focus
+        )
         errors.append("未配置 DEEPSEEK_API_KEY，本次为抽句式降级答案（非 LLM 生成）")
 
     out: dict[str, Any] = {
@@ -298,6 +309,10 @@ async def verify(state: AgentState) -> dict[str, Any]:
         normalized_top=normalized, coverage=check.coverage, authority=authority
     )
     label = confidence_label(confidence, settings=settings)
+    # 追问场景下 queries 已由 rewrite 用上文补全，锚点校验用补全后的意图文本
+    resolved_query = " ".join(
+        str(q) for q in (state.get("queries") or []) if str(q).strip()
+    ).strip()
     decision = should_reject(
         answer=answer,
         blocks=blocks,
@@ -306,6 +321,10 @@ async def verify(state: AgentState) -> dict[str, Any]:
         confidence=confidence,
         settings=settings,
         question=str(state.get("question") or ""),
+        anchor_query=resolved_query or None,
+        is_followup=looks_like_followup(
+            str(state.get("question") or ""), state.get("history") or []
+        ),
         corpus_text=await kb_corpus_text(),
         score_threshold=sufficiency_threshold(state),
     )

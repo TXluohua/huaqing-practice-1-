@@ -322,6 +322,10 @@ def print_summary(summary: dict[str, Any], results: Sequence[ItemResult]) -> Non
         f"／预热 {summary['warmup_s']}s（模型加载，生产由 lifespan 承担）"
     )
     print(
+        "  注：首 Token 指标按已修订的 NFR-01 计（≤ 8s）。本实现「先过 verify 再出字」，"
+        "首 Token ≈ 整条链路耗时，因此以上 P95 即首 Token 的上界。"
+    )
+    print(
         f"  精排提供方：{summary.get('rerank_provider') or '-'}"
         "（cross-encoder = 真 Cross-Encoder；lexical = 无模型时的确定性降级）"
     )

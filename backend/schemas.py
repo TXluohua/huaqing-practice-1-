@@ -151,6 +151,11 @@ class DoneEvent(BaseModel):
     confidence: float
     label: ConfidenceLabel
     uncertain: list[str] = Field(default_factory=list)
+    #: 本轮问答记录 ID（2026-09 追加，接口文档 §8 缺口③）：
+    #: 前端拿它才能对「刚拿到的答案」直接提交反馈，否则反馈按钮只能置灰、
+    #: 要等刷新历史页才拿得到 qa_id。chat_service 一直在 payload 里给这个字段，
+    #: 但模型未声明 —— 这里补齐，保证 OpenAPI 与前端类型能看到它。
+    qa_id: int | None = None
 
 
 class ErrorEvent(BaseModel):
