@@ -104,7 +104,7 @@ backend/
 ├── setting.py         # 全部配置（调参不改代码）
 ├── schemas.py         # 请求/响应契约 + ServiceError
 ├── dependency.py      # 启动预热与进程级单例
-├── db.py              # 业务库模型（SQLite 开发 / MySQL 生产）
+├── db.py              # 业务库模型（当前配置 MySQL；SQLite 可一键切回）
 ├── memory.py          # 会话检查点（SqliteSaver）+ session↔thread 映射
 ├── routers/           # 路由层：只做 HTTP 翻译
 ├── services/          # 服务层：会话/问答/入库/索引

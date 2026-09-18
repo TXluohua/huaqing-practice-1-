@@ -72,7 +72,7 @@ onMounted(() => void checkHealth())
 </script>
 
 <template>
-  <div class="app">
+  <div class="app scanlines">
     <header class="app__header">
       <div class="app__brand">
         <!-- 芯片状的品牌标记：比一个色块字母更能说明「半导体设备」这个领域 -->
@@ -185,6 +185,8 @@ onMounted(() => void checkHealth())
 
 <style scoped>
 .app {
+  /* .scanlines 的 ::before 是绝对定位，需要一个定位祖先 */
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -199,9 +201,10 @@ onMounted(() => void checkHealth())
   gap: var(--sp-6);
   height: var(--app-header-h);
   padding: 0 var(--sp-6);
-  background: rgb(255 255 255 / 88%);
-  backdrop-filter: saturate(180%) blur(12px);
+  background: rgba(13, 17, 23, 0.85);
+  backdrop-filter: saturate(180%) blur(16px);
   border-bottom: 1px solid var(--line-1);
+  box-shadow: 0 1px 0 0 rgba(0, 212, 255, 0.08);
 }
 
 .app__brand {
@@ -211,17 +214,17 @@ onMounted(() => void checkHealth())
   gap: 10px;
 }
 
-/* 品牌标记：渐变方块 + 白色芯片图形 */
+/* 品牌标记：青蓝渐变 + 发光 */
 .app__logo {
   display: flex;
   align-items: center;
   justify-content: center;
   width: 30px;
   height: 30px;
-  color: #fff;
-  background: linear-gradient(140deg, var(--brand-500), var(--brand-700));
+  color: var(--on-brand);
+  background: linear-gradient(140deg, #00d4ff, #0066ff);
   border-radius: 9px;
-  box-shadow: 0 2px 6px rgb(37 99 235 / 28%);
+  box-shadow: 0 2px 8px rgba(0, 212, 255, 0.3), 0 0 12px rgba(0, 212, 255, 0.15);
 }
 
 .app__brand-text {
@@ -275,9 +278,9 @@ onMounted(() => void checkHealth())
 
 /* router-link-active 的类名由 vue-router 自动加上 */
 .app__nav-item.router-link-active {
-  color: var(--brand-700);
+  color: var(--brand-400);
   background: var(--surface-0);
-  box-shadow: var(--sh-xs);
+  box-shadow: 0 0 12px rgba(0, 212, 255, 0.15), var(--sh-xs);
 }
 
 /* ------------------------------------------------------------ 服务状态 */
@@ -296,15 +299,20 @@ onMounted(() => void checkHealth())
   font-size: var(--fs-xs);
   color: var(--ink-500);
   cursor: pointer;
-  background: var(--surface-1);
+  /* 用 surface-2 而不是 surface-1：顶栏本身就是近 #0d1117 的深色，
+     同色底会让这个按钮看起来只是一段文字，失去「可点」的暗示 */
+  background: var(--surface-2);
   border: 1px solid var(--line-1);
   border-radius: var(--r-pill);
-  transition: background 0.16s var(--ease), border-color 0.16s var(--ease);
+  transition: background 0.16s var(--ease), border-color 0.16s var(--ease),
+    color 0.16s var(--ease), box-shadow 0.16s var(--ease);
 }
 
 .app__health:hover:not(:disabled) {
-  background: var(--surface-2);
-  border-color: var(--line-2);
+  color: var(--ink-900);
+  background: var(--surface-3);
+  border-color: var(--line-1);
+  box-shadow: var(--glow-2);
 }
 
 .app__health:disabled {
@@ -316,25 +324,31 @@ onMounted(() => void checkHealth())
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  box-shadow: 0 0 0 3px currentcolor;
+  box-shadow: 0 0 6px currentcolor, 0 0 0 3px currentcolor;
   opacity: 0.95;
 }
 
 .app__health-dot--ok {
-  color: rgb(21 128 61 / 18%);
+  color: rgba(45, 212, 191, 0.2);
   background: var(--ok-600);
+  animation: health-pulse 2s ease-in-out infinite;
 }
 .app__health-dot--degraded {
-  color: rgb(180 83 9 / 18%);
+  color: rgba(251, 191, 36, 0.2);
   background: var(--warn-600);
 }
 .app__health-dot--down {
-  color: rgb(220 38 38 / 18%);
+  color: rgba(248, 113, 113, 0.2);
   background: var(--danger-600);
 }
 .app__health-dot--unknown {
-  color: rgb(139 145 158 / 18%);
+  color: rgba(139, 148, 158, 0.2);
   background: var(--ink-400);
+}
+
+@keyframes health-pulse {
+  0%, 100% { opacity: 0.95; }
+  50% { opacity: 0.6; }
 }
 
 /* ---------------------------------------------------------------- 横幅 */
@@ -352,8 +366,9 @@ onMounted(() => void checkHealth())
 .app__banner-cmd {
   display: inline-block;
   padding: 6px 10px;
-  color: var(--ink-700);
-  background: rgb(0 0 0 / 5%);
+  color: var(--ink-900);
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--line-1);
   border-radius: var(--r-sm);
 }
 

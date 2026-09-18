@@ -170,7 +170,7 @@ const extractedChips = computed(() => {
 }
 
 .image-thumb__remove:hover {
-  color: #fff;
+  color: var(--surface-1);
   background: var(--danger-600);
   border-color: var(--danger-600);
 }

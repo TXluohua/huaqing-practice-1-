@@ -46,6 +46,19 @@ const detailTitle = computed(
   () => sessionStore.sessions.find((item) => item.session_id === activeSessionId.value)?.title ?? '',
 )
 
+/**
+ * 会话行的 LED 色调。
+ *
+ * 后端的 SessionItem 没有状态字段（接口文档 §4.4 只有标题/条数/时间），
+ * 所以这里**不臆造状态**，只用 message_count 推断「这轮问答是否落齐了」：
+ * 助手回答写库失败时该会话就会停在奇数条上。这是纯展示用的保守推断，
+ * 不触发任何额外请求；真要区分「进行中 / 出错」，得先让后端在列表里带上状态。
+ */
+function sessionTone(item: { message_count: number }): string {
+  if (item.message_count >= 2) return 'ok'
+  return 'warn' // 0 条（空会话）或 1 条（只有提问，回答未落库）
+}
+
 onMounted(async () => {
   try {
     await sessionStore.fetchSessions({ resetOffset: true })
@@ -167,11 +180,15 @@ function onContentClick(event: MouseEvent, citations: Citation[] | undefined): v
           :class="{ 'session--active': item.session_id === activeSessionId }"
           @click="openSession(item.session_id)"
         >
-          <div class="session__title">{{ item.title || '未命名会话' }}</div>
-          <div class="session__sub">{{ item.last_question || '—' }}</div>
-          <div class="session__meta">
-            <span class="tnum">{{ item.message_count }} 条</span>
-            <span class="tnum">{{ formatTime(item.updated_at) }}</span>
+          <!-- LED 在最左：一列会话扫下来，状态比标题更早进入视线 -->
+          <span class="led session__led" :class="`led--${sessionTone(item)}`" aria-hidden="true" />
+          <div class="session__body">
+            <div class="session__title">{{ item.title || '未命名会话' }}</div>
+            <div class="session__sub">{{ item.last_question || '—' }}</div>
+            <div class="session__meta">
+              <span class="tnum">{{ item.message_count }} 条</span>
+              <span class="tnum">{{ formatTime(item.updated_at) }}</span>
+            </div>
           </div>
         </li>
       </ul>
@@ -351,23 +368,30 @@ function onContentClick(event: MouseEvent, citations: Citation[] | undefined): v
 }
 
 /* ------------------------------------------------------------ 会话条目 */
+/* 紧凑数据行：左侧 LED + 三行信息（标题 / 最近一问 / 条数与时间）。
+   行高刻意压到 ~62px，一屏能看十几条会话，符合「仪表盘上翻列表」的用法 */
 .session {
   position: relative;
-  padding: 10px var(--sp-3);
+  display: flex;
+  gap: var(--sp-3);
+  align-items: flex-start;
+  padding: 9px var(--sp-3) 9px var(--sp-4);
   margin-bottom: 2px;
   cursor: pointer;
   border: 1px solid transparent;
   border-radius: var(--r-md);
-  transition: background 0.14s var(--ease), border-color 0.14s var(--ease);
+  transition: background 0.14s var(--ease), border-color 0.14s var(--ease),
+    box-shadow 0.14s var(--ease);
 }
 
 .session:hover {
-  background: var(--surface-1);
+  background: var(--surface-2);
 }
 
 .session--active {
-  background: var(--brand-50);
-  border-color: var(--brand-100);
+  background: rgba(0, 212, 255, 0.06);
+  border-color: rgba(0, 212, 255, 0.2);
+  box-shadow: inset 0 0 20px rgba(0, 212, 255, 0.04);
 }
 
 /* 选中态左侧加一条主色竖条，与引用卡片的处理保持一致 */
@@ -376,11 +400,22 @@ function onContentClick(event: MouseEvent, citations: Citation[] | undefined): v
   top: 50%;
   left: 0;
   width: 3px;
-  height: 20px;
+  height: 22px;
   content: '';
   background: var(--brand-600);
   border-radius: 0 2px 2px 0;
+  box-shadow: 0 0 8px rgba(0, 212, 255, 0.6);
   transform: translateY(-50%);
+}
+
+/* 与标题首行的视觉中线对齐，不跟着 flex 顶对齐 */
+.session__led {
+  margin-top: 5px;
+}
+
+.session__body {
+  flex: 1;
+  min-width: 0;
 }
 
 .session__title {
@@ -393,7 +428,7 @@ function onContentClick(event: MouseEvent, citations: Citation[] | undefined): v
 }
 
 .session--active .session__title {
-  color: var(--brand-700);
+  color: var(--brand-400);
 }
 
 .session__sub {
@@ -405,6 +440,7 @@ function onContentClick(event: MouseEvent, citations: Citation[] | undefined): v
   white-space: nowrap;
 }
 
+/* 条数与时间用等宽数位：一列里数字的位数不同也不会有跳动感 */
 .session__meta {
   display: flex;
   justify-content: space-between;
@@ -463,13 +499,15 @@ function onContentClick(event: MouseEvent, citations: Citation[] | undefined): v
   white-space: nowrap;
 }
 
+/* 与问答页顶栏的会话 id 同款：等宽 + 青字 + 青色描边底 */
 .history__main-sid {
   flex: 0 0 auto;
   padding: 1px 7px;
   font-size: 11px;
-  color: var(--ink-400);
+  color: var(--brand-400);
   cursor: text;
-  background: var(--surface-1);
+  background: rgba(0, 212, 255, 0.07);
+  border: 1px solid rgba(0, 212, 255, 0.16);
   border-radius: var(--r-sm);
   user-select: all;
 }
@@ -504,7 +542,8 @@ function onContentClick(event: MouseEvent, citations: Citation[] | undefined): v
   border-radius: var(--r-lg);
 }
 
-/* 提问用浅灰底、回答用白底：一屏里能立刻分出问答对 */
+/* 提问用更亮一档的底（surface-2）且无描边，回答用 surface-0 + 描边：
+   深色主题下靠明度差分层，一屏里能立刻分出问答对 */
 .turn--user {
   background: var(--surface-2);
   border-color: transparent;
@@ -533,11 +572,13 @@ function onContentClick(event: MouseEvent, citations: Citation[] | undefined): v
 .turn__role--user {
   color: var(--ink-500);
   background: var(--surface-0);
+  border: 1px solid var(--line-1);
 }
 
 .turn__role--assistant {
-  color: var(--brand-700);
+  color: var(--brand-400);
   background: var(--brand-50);
+  border: 1px solid rgba(0, 212, 255, 0.2);
 }
 
 .turn__meta {

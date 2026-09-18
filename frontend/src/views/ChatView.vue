@@ -116,9 +116,28 @@ onBeforeUnmount(() => {
 }
 
 .chat-view__bar {
+  position: relative;
   flex: 0 0 auto;
   background: var(--surface-0);
   border-bottom: 1px solid var(--line-1);
+}
+
+/* 底边的青色细线两端渐隐：通栏一条实线在宽屏上会把页面切成两半，
+   渐隐后它只起「这里有一条分隔」的暗示作用 */
+.chat-view__bar::after {
+  position: absolute;
+  right: 0;
+  bottom: -1px;
+  left: 0;
+  height: 1px;
+  content: '';
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(0, 212, 255, 0.35) 25%,
+    rgba(0, 212, 255, 0.35) 75%,
+    transparent
+  );
 }
 
 /* 与消息列同宽，标题和按钮才和下方内容左右对齐 */
@@ -149,14 +168,16 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-/* 会话 id 是排查用的次要信息，弱化到几乎看不见，但可选中复制 */
+/* 会话 id 是排查用的次要信息：等宽 + 青色，一眼能从中文标题里分出来，
+   但仍然只有 11px —— 它是给排障时复制用的，不是给人读的 */
 .chat-view__sid {
   flex: 0 0 auto;
   padding: 1px 7px;
   font-size: 11px;
-  color: var(--ink-400);
+  color: var(--brand-400);
   cursor: text;
-  background: var(--surface-1);
+  background: rgba(0, 212, 255, 0.07);
+  border: 1px solid rgba(0, 212, 255, 0.16);
   border-radius: var(--r-sm);
   user-select: all;
 }

@@ -214,7 +214,7 @@ function useExample(text: string): void {
 .list__skeleton {
   padding: var(--sp-4) var(--sp-5);
   background: var(--surface-0);
-  border: 1px solid var(--line-1);
+  border: 1px solid var(--line-2);
   border-radius: var(--r-lg);
 }
 
@@ -224,16 +224,18 @@ function useExample(text: string): void {
   text-align: center;
 }
 
+/* 空态的电路板标记：与顶栏 logo 同一支青蓝渐变 + 一圈外发光，
+   让「还没开始」的页面也有仪表盘的通电感 */
 .empty__mark {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 56px;
   height: 56px;
-  color: #fff;
-  background: linear-gradient(140deg, var(--brand-500), var(--brand-700));
+  color: #04121a;
+  background: linear-gradient(140deg, #00d4ff, #0066ff);
   border-radius: var(--r-xl);
-  box-shadow: 0 8px 20px rgb(37 99 235 / 22%);
+  box-shadow: 0 8px 24px rgba(0, 212, 255, 0.22), 0 0 0 6px rgba(0, 212, 255, 0.06);
 }
 
 .empty__title {
@@ -259,7 +261,7 @@ function useExample(text: string): void {
   text-align: left;
 }
 
-/* 示例问题做成整行可点的卡片，比小按钮更容易扫读也更好点 */
+/* 示例问题做成整行可点的玻璃 pill，比小按钮更容易扫读也更好点 */
 .empty__card {
   display: flex;
   align-items: center;
@@ -271,18 +273,18 @@ function useExample(text: string): void {
   color: var(--ink-700);
   text-align: left;
   cursor: pointer;
-  background: var(--surface-0);
-  border: 1px solid var(--line-1);
-  border-radius: var(--r-md);
-  box-shadow: var(--sh-xs);
+  background: rgba(22, 27, 34, 0.7);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(0, 212, 255, 0.14);
+  border-radius: var(--r-pill);
   transition: border-color 0.16s var(--ease), box-shadow 0.16s var(--ease),
     transform 0.16s var(--ease), color 0.16s var(--ease);
 }
 
 .empty__card:hover {
   color: var(--ink-900);
-  border-color: var(--brand-200);
-  box-shadow: var(--sh-md);
+  border-color: rgba(0, 212, 255, 0.45);
+  box-shadow: var(--glow-3), var(--sh-md);
   transform: translateY(-1px);
 }
 
@@ -326,15 +328,17 @@ function useExample(text: string): void {
   margin: 0 auto;
   color: var(--ink-500);
   cursor: pointer;
-  background: var(--surface-0);
-  border: 1px solid var(--line-1);
+  background: rgba(22, 27, 34, 0.85);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(0, 212, 255, 0.18);
   border-radius: 50%;
   box-shadow: var(--sh-md);
 }
 
 .list__jump:hover {
-  color: var(--brand-600);
-  border-color: var(--brand-200);
+  color: var(--brand-400);
+  border-color: rgba(0, 212, 255, 0.5);
+  box-shadow: var(--sh-md), var(--glow-2);
 }
 
 .jump-enter-active,

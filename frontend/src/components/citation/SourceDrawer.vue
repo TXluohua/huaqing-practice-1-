@@ -127,6 +127,8 @@ const metaRows = computed(() => {
   background: var(--surface-1);
 }
 
+/* 原文片段用比抽屉底（surface-0）更暗一档的 surface-1：
+   它是「引来的外部材料」，压暗一档正好表达「这块不是我写的」 */
 .source-drawer__snippet {
   padding: var(--sp-4);
   font-size: var(--fs-sm);
@@ -136,7 +138,7 @@ const metaRows = computed(() => {
   white-space: pre-wrap;
   background: var(--surface-1);
   border: 1px solid var(--line-1);
-  border-left: 3px solid var(--brand-200);
+  border-left: 3px solid var(--brand-400);
   border-radius: var(--r-sm) var(--r-md) var(--r-md) var(--r-sm);
 }
 </style>
