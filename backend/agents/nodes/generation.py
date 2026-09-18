@@ -29,6 +29,7 @@ from typing import Any, Sequence
 
 from ...rag.citation import (
     authority_score,
+    enforce_citations,
     build_not_covered_answer,
     build_uncertain_notes,
     check_citations,
@@ -278,6 +279,18 @@ async def generate(state: AgentState) -> dict[str, Any]:
         )
         errors.append("未配置 DEEPSEEK_API_KEY，本次为抽句式降级答案（非 LLM 生成）")
 
+    # 统一做「引用归属」：已有引用的句子不动，缺引用的按文本重合度归属到上下文块，
+    # 归属不上的句子直接省略。这样「引用覆盖率 100%」由代码保证，而不是靠 LLM 自觉 ——
+    # 实测（配了 DEEPSEEK_API_KEY 后）LLM 只挂到 78%~94%，原先被硬闸门整条拒答（缺陷 #10）。
+    answer, enforce_stats = enforce_citations(
+        answer, blocks, threshold=settings.citation_attribution_threshold
+    )
+    structured["citation_enforcement"] = enforce_stats
+    if enforce_stats["dropped"]:
+        errors.append(
+            f"引用归属：{enforce_stats['dropped']} 句结论因无法归属到上下文块被省略"
+        )
+
     out: dict[str, Any] = {
         "answer": answer,
         "answer_structured": structured,
@@ -336,6 +349,12 @@ async def verify(state: AgentState) -> dict[str, Any]:
         label = confidence_label(confidence, settings=settings)
 
     notes = build_uncertain_notes(decision, check)
+    enforcement = (state.get("answer_structured") or {}).get("citation_enforcement") or {}
+    if enforcement.get("dropped"):
+        notes.append(
+            f"有 {enforcement['dropped']} 句结论因未在材料中找到依据被省略"
+            f"（引用归属阈值 {enforcement.get('threshold')}）"
+        )
     out: dict[str, Any] = {
         "confidence": confidence,
         "confidence_label": label,

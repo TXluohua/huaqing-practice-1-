@@ -122,6 +122,11 @@ class Settings(BaseSettings):
     #: Ollama 本地服务（开发文档 5.3 的 bge-m3 路线）
     ollama_base_url: str = "http://127.0.0.1:11434"
     ollama_embedding_model: str = "bge-m3"
+    #: Ollama 调用超时（秒）。原先写死 10s，导致 32 条切片批量向量化必 ReadTimeout，
+    #: 实际把「bge-m3 路线」堵死了（甲侧实测缺陷 #8）。改为可配，默认 60s。
+    ollama_timeout_s: float = 60.0
+    #: Ollama 单次请求的文本条数（分批发送，避免一次请求过大而超时）
+    ollama_batch_size: int = 16
     #: 阿里云向量化模型（配置 DASHSCOPE_API_KEY 后可用）
     dashscope_embedding_model: str = "text-embedding-v3"
     #: 向量库后端：auto / chroma / simple（simple 为内置零依赖兜底实现）
@@ -156,6 +161,10 @@ class Settings(BaseSettings):
     #: 依据 20 条黄金集实测：正样本最大 0.33、负样本 0.43，取 0.40 留双向余量；
     #: 黄金集扩到 50 条后必须重新校准。
     anchor_kb_missing_ratio: float = 0.4
+    #: 引用归属阈值：LLM 答案里未挂引用的结论句，程序化归属到上下文块时的
+    #: 最小「句子-块」字符二元组重合度。低于该值视为无法归属 → 该句不进入答案
+    #: （宁可少说，也不给没有依据的句子）
+    citation_attribution_threshold: float = 0.45
     #: 引用来源权威度权重（置信度公式的 0.25 项，键为 category）
     authority_weights: dict[str, float] = {
         "标准": 1.0,

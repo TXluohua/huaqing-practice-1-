@@ -266,10 +266,22 @@ class OllamaEmbedder:
 
     name = "ollama"
 
-    def __init__(self, base_url: str, model: str, *, timeout_s: float = 10.0) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        model: str,
+        *,
+        timeout_s: float | None = None,
+        batch_size: int | None = None,
+    ) -> None:
+        settings = get_settings()
         self.base_url = base_url.rstrip("/")
         self.model = model
-        self.timeout_s = timeout_s
+        # 超时与批量都从配置读：写死 10s 会让切片批量向量化必超时（实测缺陷 #8）
+        self.timeout_s = float(settings.ollama_timeout_s if timeout_s is None else timeout_s)
+        self.batch_size = int(
+            settings.ollama_batch_size if batch_size is None else batch_size
+        )
         self._dim: int | None = None
         self._lock = asyncio.Lock()
 
@@ -294,16 +306,22 @@ class OllamaEmbedder:
             return False
 
     async def embed(self, texts: Sequence[str]) -> np.ndarray:
+        """分批向量化：一次请求发几十条长文本会把服务端拖到超时。"""
+
         import httpx
 
+        chunks: list[np.ndarray] = []
         async with httpx.AsyncClient(timeout=self.timeout_s) as client:
-            resp = await client.post(
-                f"{self.base_url}/api/embed",
-                json={"model": self.model, "input": list(texts)},
-            )
-            resp.raise_for_status()
-            payload = resp.json()
-        vectors = np.asarray(payload["embeddings"], dtype=np.float32)
+            for start in range(0, len(texts), max(1, self.batch_size)):
+                batch = list(texts[start : start + max(1, self.batch_size)])
+                resp = await client.post(
+                    f"{self.base_url}/api/embed",
+                    json={"model": self.model, "input": batch},
+                )
+                resp.raise_for_status()
+                payload = resp.json()
+                chunks.append(np.asarray(payload["embeddings"], dtype=np.float32))
+        vectors = np.vstack(chunks) if chunks else np.zeros((0, 0), dtype=np.float32)
         norms = np.linalg.norm(vectors, axis=1, keepdims=True)
         norms[norms == 0] = 1.0
         vectors = vectors / norms
@@ -380,7 +398,12 @@ async def create_embedder(settings: Settings | None = None) -> Embedder:
         return HashingEmbedder()
 
     if choice == "ollama":
-        return OllamaEmbedder(settings.ollama_base_url, settings.ollama_embedding_model)
+        return OllamaEmbedder(
+            settings.ollama_base_url,
+            settings.ollama_embedding_model,
+            timeout_s=settings.ollama_timeout_s,
+            batch_size=settings.ollama_batch_size,
+        )
 
     if choice == "dashscope":  # pragma: no cover - 仅显式配置时
         if not settings.dashscope_api_key:
@@ -412,7 +435,12 @@ async def create_embedder(settings: Settings | None = None) -> Embedder:
     except Exception as exc:  # noqa: BLE001 - 逐级降级
         logger.warning("本地 embedding 不可用（%s），尝试下一级", exc)
 
-    ollama = OllamaEmbedder(settings.ollama_base_url, settings.ollama_embedding_model)
+    ollama = OllamaEmbedder(
+        settings.ollama_base_url,
+        settings.ollama_embedding_model,
+        timeout_s=settings.ollama_timeout_s,
+        batch_size=settings.ollama_batch_size,
+    )
     if await ollama.ping():
         logger.warning("改用本地 Ollama（%s）做向量化", settings.ollama_embedding_model)
         return ollama
@@ -668,10 +696,14 @@ class VectorStore:
         root: Path,
         embedder: Embedder,
         backend: _SimpleBackend | _ChromaBackend,
+        strict_signature: bool = True,
     ) -> None:
         self.root = root
         self.embedder = embedder
         self.backend = backend
+        #: 是否校验「索引签名 vs 当前 embedding 实例」。重建场景必须关掉 ——
+        #: 否则「签名不匹配 → 请重建 → 重建又先校验」形成死锁（实测缺陷 #9）
+        self.strict_signature = strict_signature
         self._loaded = False
         self._load_lock = asyncio.Lock()
 
@@ -686,11 +718,19 @@ class VectorStore:
                 await asyncio.to_thread(self.backend.load)
             self._loaded = True
         manifest = self.manifest()
-        if manifest and manifest.get("signature") not in (None, self.embedder.signature):
+        if (
+            self.strict_signature
+            and manifest
+            and manifest.get("signature") not in (None, self.embedder.signature)
+        ):
             raise EmbeddingMismatchError(
                 "索引与当前 embedding 实例不匹配："
                 f"索引 {manifest.get('signature')} / 当前 {self.embedder.signature}。"
-                "请重建索引（scripts/build_index.py --rebuild）"
+                "请重建索引：`.venv/bin/python scripts/build_index.py`"
+                "（默认就是「清空后重建」，无需额外参数；只想追加用 --keep）；"
+                "或 `scripts/ingest.py --rebuild`。"
+                "若重建脚本本身也被此校验挡住，用 store.rebuild_store() / --rebuild 参数，"
+                "它会先清空索引再建，不会先做签名校验。"
             )
 
     def manifest(self) -> dict[str, Any]:
@@ -869,6 +909,36 @@ async def get_store(*, force_new: bool = False) -> VectorStore:
         return _store
 
 
+async def rebuild_store() -> VectorStore:
+    """重建索引专用入口：**先清空，再返回可用实例**（不做签名校验）。
+
+    与 get_store() 的区别只有一个：`strict_signature=False`。
+    这条入口是给「换 embedding 模型 / 换向量库」用的 ——
+    此时旧索引的签名必然与当前实例不符，若走 get_store() 会先抛
+    EmbeddingMismatchError，导致「重建脚本自己也被挡住」（实测缺陷 #9）。
+
+    注意：会**清空**索引，随后由调用方重新入库。
+    """
+
+    global _store
+    async with _lock():
+        settings = get_settings()
+        settings.ensure_dirs()
+        embedder = await create_embedder(settings)
+        backend = _build_backend(Path(settings.chroma_dir), settings)
+        store = VectorStore(
+            root=Path(settings.chroma_dir),
+            embedder=embedder,
+            backend=backend,
+            strict_signature=False,
+        )
+        await store.ensure_ready()
+        await store.reset()
+        _store = store
+        logger.info("索引已清空并重建索引实例（provider=%s）", embedder.signature)
+        return store
+
+
 def reset_store() -> None:
     """清空单例（测试用；不影响磁盘索引）。"""
 
@@ -891,5 +961,6 @@ __all__ = [
     "VectorStore",
     "create_embedder",
     "get_store",
+    "rebuild_store",
     "reset_store",
 ]

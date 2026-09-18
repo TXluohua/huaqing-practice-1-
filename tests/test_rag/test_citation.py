@@ -17,6 +17,7 @@ if str(ROOT) not in sys.path:
 from backend.agents.state import Evidence  # noqa: E402
 from backend.rag.citation import (  # noqa: E402
     anchor_check,
+    enforce_citations,
     build_not_covered_answer,
     check_citations,
     compute_confidence,
@@ -196,6 +197,87 @@ def test_anchor_check_flags_terms_absent_from_knowledge_base() -> None:
     assert check.kb_missing_ratio > 0.4
     assert check.ok is False
     assert any("知识库中不存在" in reason for reason in check.reasons)
+
+
+# --------------------------------------------------------------------------- #
+# 引用归属（LLM 路径的覆盖率保障，实测缺陷 #10）
+# --------------------------------------------------------------------------- #
+def test_enforce_citations_attributes_and_drops() -> None:
+    """缺引用的结论句：能归属的补上编号，归属不上的整句省略。"""
+
+    answer = (
+        "- 腔体真空度异常时先检查腔体门 O-ring [1]。\n"
+        "- 干泵 RP-300 的额定抽速是 300 立方米每小时。\n"
+        "- 今天股市大涨，建议买入科技股。"
+    )
+    fixed, stats = enforce_citations(answer, BLOCKS, threshold=0.45)
+    assert stats["attributed"] == 1, stats
+    assert stats["dropped"] == 1, stats
+    assert "[2]" in fixed, fixed            # 归属到「真空泵抽速」那一块
+    assert "股市" not in fixed              # 无依据的句子被省略
+    assert check_citations(fixed, BLOCKS).coverage == 1.0
+
+
+def test_enforce_citations_keeps_non_claim_lines() -> None:
+    """标题、依据清单等非结论行原样保留（不能被当成无依据结论删掉）。"""
+
+    answer = (
+        "**基础理解**\n"
+        "- 腔体真空度异常先检查 O-ring [1]。\n\n"
+        "依据：\n- [1] 《刻蚀设备维护手册》 V3.2 第 3 页 章节 3.4"
+    )
+    fixed, stats = enforce_citations(answer, BLOCKS, threshold=0.45)
+    assert "**基础理解**" in fixed
+    assert "依据：" in fixed
+    assert stats["dropped"] == 0
+    assert fixed.count("[1]") >= 2
+
+
+def test_enforce_citations_all_unattributable_yields_empty_and_rejects() -> None:
+    """整条回答都没有依据时，答案被清空 → 仍然走拒答（fail-closed 不被破坏）。"""
+
+    answer = "今天股市大涨，建议买入科技股。天气也不错，适合郊游。"
+    fixed, stats = enforce_citations(answer, BLOCKS, threshold=0.45)
+    assert fixed.strip() == ""
+    assert stats["dropped"] >= 1
+
+    decision = should_reject(
+        answer=fixed,
+        blocks=BLOCKS,
+        check=check_citations(fixed, BLOCKS),
+        normalized_top=0.9,
+        confidence=0.9,
+        question="今天天气怎么样？",
+        score_threshold=0.25,
+    )
+    assert decision.reject is True and decision.status == "NOT_COVERED"
+
+
+def test_partial_coverage_answer_is_repaired_not_rejected() -> None:
+    """缺陷 #10 的回归：LLM 常见的「部分句子漏引用」应当被修复后放行，而不是整条拒答。"""
+
+    llm_style = (
+        "- 腔体真空度异常时应先检查腔体门 O-ring 有无压痕 [1]。\n"
+        "- 再确认真空泵抽速是否达标。\n"
+        "- 必要时检查压力传感器零点漂移。"
+    )
+    before = check_citations(llm_style, BLOCKS)
+    assert before.coverage < 1.0, "构造的样例应当是不达标的"
+
+    fixed, _stats = enforce_citations(llm_style, BLOCKS, threshold=0.45)
+    after = check_citations(fixed, BLOCKS)
+    assert after.coverage == 1.0, fixed
+
+    decision = should_reject(
+        answer=fixed,
+        blocks=BLOCKS,
+        check=after,
+        normalized_top=0.9,
+        confidence=0.9,
+        question="腔体真空度异常怎么排查？",
+        score_threshold=0.25,
+    )
+    assert decision.reject is False and decision.status == "OK"
 
 
 if __name__ == "__main__":  # pragma: no cover - 无 pytest 时的兜底运行入口
