@@ -1,0 +1,38 @@
+{
+  "generated_at": "2026-09-18T19:30:36",
+  "base_url": "http://127.0.0.1:8000",
+  "rounds": [
+    {
+      "concurrency": 1,
+      "n_ok": 1,
+      "n_failed": 0,
+      "error_rate": 0.0,
+      "wall_s": 8.462,
+      "total_p50_s": 8.462,
+      "total_p95_s": 8.462,
+      "first_token_p50_s": 8.437,
+      "first_token_p95_s": 8.437,
+      "status_counts": {
+        "OK": 1
+      },
+      "verdict": "可以支撑（P95 8s，在 NFR 上限内）",
+      "failures": []
+    }
+  ],
+  "worst_round": {
+    "concurrency": 1,
+    "n_ok": 1,
+    "n_failed": 0,
+    "error_rate": 0.0,
+    "wall_s": 8.462,
+    "total_p50_s": 8.462,
+    "total_p95_s": 8.462,
+    "first_token_p50_s": 8.437,
+    "first_token_p95_s": 8.437,
+    "status_counts": {
+      "OK": 1
+    },
+    "verdict": "可以支撑（P95 8s，在 NFR 上限内）",
+    "failures": []
+  }
+}

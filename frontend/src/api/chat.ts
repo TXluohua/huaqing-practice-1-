@@ -93,6 +93,12 @@ export interface DoneEvent {
   label: ConfidenceLabel
   /** 未能溯源 / 存疑的点 */
   uncertain: string[]
+  /**
+   * 本轮问答记录 ID（后端 `DoneEvent.qa_id`，2026-09 追加）。
+   * 拿到它才能对「刚生成的这条回答」直接提交反馈，不必刷新历史页。
+   * 后端可能给 null（落库失败等），此时反馈按钮保持置灰。
+   */
+  qa_id: number | null
 }
 
 export interface ErrorEvent {

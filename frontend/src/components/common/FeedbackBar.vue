@@ -6,10 +6,10 @@
  *   - 必须带 qa_id；type=correct 时 corrected_answer 必填，否则 400 CORRECTED_ANSWER_REQUIRED；
  *   - comment 上限 500 字，超长会被 Pydantic 拦成 400。
  *
- * **已知契约缺口**：SSE 的 done 事件不带 qa_id（接口文档 §8 未列，但 schema 确实没有），
- * 因此刚生成完的回答拿不到 qa_id，无法提交反馈。这里对 qaId 为空的场景
- * 置灰按钮并说明原因，而不是伪造一个 id 让请求 404。
- * 历史页的消息带 qa_id，可以正常反馈。
+ * **qa_id 来源**：done 事件已带 qa_id（接口文档 §8 缺口③，后端 `DoneEvent.qa_id`），
+ * chat store 在 onDone 里写进 message.qaId，所以刚生成完的回答也能直接反馈，不必刷新历史页。
+ * 仅当后端确实没给出 id（落库失败等）时 qaId 才是 null，此时置灰并说明原因，
+ * 而不是伪造一个 id 让请求 404。历史页的消息则由接口直接返回 qa_id。
  */
 import { ElMessage } from 'element-plus'
 import { computed, ref } from 'vue'
@@ -38,7 +38,7 @@ const submitting = ref(false)
 const disabled = computed(() => props.qaId === null)
 const disabledReason = computed(() =>
   props.qaId === null
-    ? '本次回答尚未落库（done 事件不带 qa_id），请到「历史会话」中对该轮问答提交反馈'
+    ? '本次回答未返回 qa_id（后端未落库），请刷新「历史会话」后再对该轮问答提交反馈'
     : '',
 )
 
