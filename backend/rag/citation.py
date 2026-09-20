@@ -148,7 +148,15 @@ def check_citations(
 
     result = CitationCheck()
     used: list[int] = []
-    for sentence in split_sentences(answer or ""):
+    # 逐行 → 逐句：结构化行（表格/围栏/分隔线/标题）不参与结论句统计。
+    # 必须与 enforce_citations 的判定口径**完全一致**，否则会出现
+    # 「归属侧保留表格行、校验侧把它算成无引用结论句」的错配（实测踩到过）。
+    sentences: list[str] = []
+    for line in (answer or "").split("\n"):
+        if not line.strip() or is_structural_line(line):
+            continue
+        sentences.extend(split_sentences(line.strip()))
+    for sentence in sentences:
         ids = parse_citation_ids(sentence)
         if ids:
             used.extend(ids)
@@ -360,6 +368,19 @@ def _bigrams(text: str) -> set[str]:
     return {text[i : i + 2] for i in range(len(text) - 1)} if len(text) > 1 else {text}
 
 
+#: 结构化行：表格行、代码围栏、分隔线、标题 —— 原样保留，不参与逐句判定
+_STRUCTURAL_LINE_PATTERNS = (
+    re.compile(r"^\s*\|.*\|\s*$"),
+    re.compile(r"^\s*```"),
+    re.compile(r"^\s*[-*_]{3,}\s*$"),
+    re.compile(r"^\s*#{1,6}\s"),
+)
+
+
+def is_structural_line(line: str) -> bool:
+    return any(pattern.match(line) for pattern in _STRUCTURAL_LINE_PATTERNS)
+
+
 def _bigram_overlap(text: str, other: str) -> float:
     """字符二元组重合度（中文下比词重合更稳，且不依赖分词器）。"""
 
@@ -438,14 +459,15 @@ def enforce_citations(
     out_lines: list[str] = []
     for line in answer.split("\n"):
         stripped_line = line.strip()
-        if not stripped_line:
-            out_lines.append(line)
-            continue
-        # 非结论行（标题、依据清单、表格、代码块等）原样保留
-        if not is_claim_sentence(stripped_line):
+        if not stripped_line or is_structural_line(line):
             out_lines.append(line)
             continue
 
+        # 逐句判定，而不是「整行是否结论行」——
+        # 校验（check_citations）是逐句统计的，若这里按整行豁免，
+        # 「建议先检查腔体密封，若无效应停机处理。同时记录报警时间戳。」这类行
+        # 会因为行首「建议」被整行跳过，行内后半句就成了漏网的无引用结论句
+        # （实测 45 条集上 q009/q039 因此 coverage 0.889/0.909 被误拒）。
         pieces = split_sentences(stripped_line)
         if not pieces:
             out_lines.append(line)

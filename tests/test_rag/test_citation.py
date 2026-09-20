@@ -234,6 +234,26 @@ def test_enforce_citations_does_not_repair_fake_ids() -> None:
     assert check.coverage < 1.0
 
 
+def test_enforce_citations_processes_each_sentence_not_whole_line() -> None:
+    """行首被豁免（建议/注意…）不代表整行可以跳过：行内后半句仍要归属或省略。
+
+    这是实测缺陷的回归：校验按句统计覆盖率，归属若按整行豁免，
+    就会出现漏网的无引用结论句，导致覆盖率不足被误拒（q009/q039）。
+    """
+
+    answer = (
+        "建议先检查腔体密封，若无效应停机处理。同时记录报警时间戳与压力读数。\n"
+        "| 参数 | 值 |\n"
+        "```\ncode\n```"
+    )
+    fixed, stats = enforce_citations(answer, BLOCKS, threshold=0.45)
+    assert stats["dropped"] >= 1, stats          # 无依据的那半句被省略
+    check = check_citations(fixed, BLOCKS)
+    # 结论句全被省略时是「空分母」：不应被算成覆盖率不达标
+    assert check.total_claims == 0 or check.coverage == 1.0, (check.total_claims, check.coverage)
+    assert "| 参数 | 值 |" in fixed and "```" in fixed, "结构化行必须原样保留"
+
+
 def test_enforce_citations_keeps_non_claim_lines() -> None:
     """标题、依据清单等非结论行原样保留（不能被当成无依据结论删掉）。"""
 
