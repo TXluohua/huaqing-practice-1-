@@ -38,7 +38,12 @@ export interface Quiz {
   device_model: string
   topic: string
   level: string
+  /** **实际**题量；依据校验剔除不合规题目后可能少于请求量 */
   n_items: number
+  /** 请求的题量；回看试卷（GET）时为 null */
+  requested_items?: number | null
+  /** 因依据校验被剔除的题量；回看试卷（GET）时为 null */
+  dropped_items?: number | null
   items: QuizItem[]
   /** `llm:<model>` 或 `extractive-fallback`（未配文本模型时的确定性降级） */
   generator: string
