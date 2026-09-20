@@ -44,6 +44,8 @@ from fastapi import APIRouter, Body, Depends, Path, Query
 from ..schemas import (
     OrderActionRequest,
     OrderCreateRequest,
+    OrderItemRequest,
+    OrderItemUpdateRequest,
     OrderListResponse,
     PartCatalogResponse,
     PartItem,
@@ -169,6 +171,77 @@ async def get_order(
     """单个采购申请单详情（含 `allowed_actions`，前端据此渲染按钮）。"""
 
     result = await service.get_order(order_id, trace_id=trace_id)
+    if result is None:
+        raise ApiError(404, "ORDER_NOT_FOUND", f"采购申请单不存在：{order_id}")
+    return PartOrderResponse.model_validate(result)
+
+
+@router.post(
+    "/parts/orders/{order_id}/items",
+    response_model=PartOrderResponse,
+    summary="加入购物车（草稿单加明细）",
+)
+async def add_order_item(
+    order_id: int = Path(..., ge=1, description="订单 id"),
+    payload: OrderItemRequest = Body(...),
+    service: Any = Depends(get_parts_service),
+    trace_id: str = Depends(get_trace_id),
+) -> PartOrderResponse:
+    """把一条备件加入购物车（= 在 `draft` 状态的申请单里加明细）。
+
+    * 同一编码重复加入 -> **累加数量**（上限 999），不产生重复行；
+    * 单价与库存**由后端回台账取**，前端只需传 `code` 与 `qty`（替代件带 `is_substitute`）；
+    * 替代件必须有依据，否则 400 `SUBSTITUTE_BASIS_REQUIRED`；
+    * 非草稿状态 409 `INVALID_STATE`（明细在提交后冻结）。
+    """
+
+    result = await service.add_order_item(order_id, payload, trace_id=trace_id)
+    if result is None:
+        raise ApiError(404, "ORDER_NOT_FOUND", f"采购申请单不存在：{order_id}")
+    return PartOrderResponse.model_validate(result)
+
+
+@router.patch(
+    "/parts/orders/{order_id}/items/{code}",
+    response_model=PartOrderResponse,
+    summary="购物车改数量",
+)
+async def update_order_item(
+    order_id: int = Path(..., ge=1, description="订单 id"),
+    code: str = Path(..., min_length=1, description="备件编码"),
+    payload: OrderItemUpdateRequest = Body(...),
+    service: Any = Depends(get_parts_service),
+    trace_id: str = Depends(get_trace_id),
+) -> PartOrderResponse:
+    """改购物车里某条备件的数量（仅 `draft`；数量 1~999）。
+
+    明细不存在 -> 404 `ITEM_NOT_FOUND`；非草稿 -> 409 `INVALID_STATE`。
+    """
+
+    result = await service.update_order_item(order_id, code, payload, trace_id=trace_id)
+    if result is None:
+        raise ApiError(404, "ORDER_NOT_FOUND", f"采购申请单不存在：{order_id}")
+    return PartOrderResponse.model_validate(result)
+
+
+@router.delete(
+    "/parts/orders/{order_id}/items/{code}",
+    response_model=PartOrderResponse,
+    summary="移出购物车",
+)
+async def remove_order_item(
+    order_id: int = Path(..., ge=1, description="订单 id"),
+    code: str = Path(..., min_length=1, description="备件编码"),
+    service: Any = Depends(get_parts_service),
+    trace_id: str = Depends(get_trace_id),
+) -> PartOrderResponse:
+    """把一条备件移出购物车（仅 `draft`）。
+
+    允许把购物车清空（空车是正常状态），但**空草稿单不能提交**（提交时 400 `EMPTY_ORDER`）。
+    明细不存在 -> 404 `ITEM_NOT_FOUND`。
+    """
+
+    result = await service.remove_order_item(order_id, code, trace_id=trace_id)
     if result is None:
         raise ApiError(404, "ORDER_NOT_FOUND", f"采购申请单不存在：{order_id}")
     return PartOrderResponse.model_validate(result)

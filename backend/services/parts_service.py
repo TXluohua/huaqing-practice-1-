@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
+from collections.abc import Sequence
 from typing import Any
 
 from sqlalchemy import func, select
@@ -57,6 +58,8 @@ from ..db import PartOrder, PartSettlement
 from ..schemas import (
     OrderActionRequest,
     OrderCreateRequest,
+    OrderItemRequest,
+    OrderItemUpdateRequest,
     ServiceError,
     SettlementRequest,
 )
@@ -81,6 +84,9 @@ GENERIC_MODEL = "通用"
 
 #: 采购申请单币种（本期只做 CNY）
 CURRENCY = "CNY"
+
+#: 单条明细的最大数量（与 OrderItemRequest.qty 的上限一致）
+MAX_ITEM_QTY = 999
 
 #: 订单状态全集
 ORDER_STATUSES: tuple[str, ...] = (
@@ -651,6 +657,164 @@ async def get_order(order_id: int, *, trace_id: str) -> dict | None:
         return _order_view(order, trace_id)
 
 
+# --------------------------------------------------------------------------- #
+# 购物车（= `draft` 状态的采购申请单明细维护）
+# --------------------------------------------------------------------------- #
+#
+# 设计口径：**购物车就是草稿单**，不额外建一张 cart 表 ——
+#   * 「加入购物车」= 在草稿单里加一条明细（`POST …/items`，同编码累加数量）；
+#   * 「改数量」  = `PATCH …/items/{code}`（数量 1~999）；
+#   * 「移出购物车」= `DELETE …/items/{code}`（允许清空，清空的草稿单不可提交）；
+#   * 「我的购物车」= `GET /parts/orders?status=draft`。
+# 只有 `draft` 状态可改：提交之后明细即冻结（审批审的就是这份清单，不能偷偷改）。
+# 单价一律重新回台账取（`_resolve_order_item`），**不信任前端传的价格**。
+
+
+def _recalc_total(items: Sequence[dict[str, Any]]) -> float:
+    """按明细重算合计（金额取明细里的 amount，缺失则 qty × unit_price）。"""
+
+    total = 0.0
+    for item in items:
+        qty = max(1, _as_int(item.get("qty"), 1))
+        unit_price = _price_of(item)
+        total += _as_float(item.get("amount"), qty * unit_price)
+    return round(total, 2)
+
+
+async def _edit_items(
+    order_id: int,
+    mutate: Any,
+    *,
+    action_label: str,
+    trace_id: str,
+    operator: str = "",
+) -> dict | None:
+    """草稿单明细编辑的公共实现：加锁校验状态 -> 交给 mutate 改明细 -> 重算合计。
+
+    `mutate(items)` 就地修改明细列表，返回一句审计说明（可为空字符串）。
+    订单不存在返回 None（路由转 404）；非 `draft` -> 409 INVALID_STATE。
+    """
+
+    _require_db()
+    async with db.session_scope() as session:
+        order = await session.get(PartOrder, _as_int(order_id))
+        if order is None:
+            return None
+        if str(order.status or "") != "draft":
+            raise ServiceError(
+                409,
+                "INVALID_STATE",
+                f"订单 {order.order_no} 当前状态为 {order.status}，不允许{action_label}"
+                "（仅草稿状态可修改明细，提交后明细即冻结）",
+                {"order_no": order.order_no, "status": order.status, "allowed": ["draft"]},
+            )
+
+        items = [dict(item) for item in (order.items or []) if isinstance(item, dict)]
+        audit = mutate(items) or ""
+        who = str(operator or "").strip()
+        if audit and who:
+            audit = f"{audit}（操作人：{who}）"
+        now = _now()
+        order.items = items
+        order.total_amount = _recalc_total(items)
+        order.updated_at = now
+        if audit:
+            order.note = _append_note(str(order.note or ""), str(audit))
+
+        await session.flush()
+        view = _order_view(order, trace_id)
+
+    logger.info(
+        "采购申请单 %s：%s（%d 条明细，合计 %.2f %s）",
+        view["order_no"],
+        action_label,
+        len(view["items"]),
+        view["total_amount"],
+        CURRENCY,
+    )
+    return view
+
+
+async def add_order_item(
+    order_id: int, payload: OrderItemRequest, *, trace_id: str
+) -> dict | None:
+    """加入购物车（POST /parts/orders/{order_id}/items，仅 `draft`）。
+
+    * 明细价格与库存**重新回台账取**（`_resolve_order_item`），不信任前端传值；
+    * 同一编码已在购物车里 -> **累加数量**（上限 999），不产生重复行；
+    * 替代件同样受依据约束：台账查不到 `basis` -> 400 SUBSTITUTE_BASIS_REQUIRED；
+    * 非草稿状态 -> 409 INVALID_STATE。
+    """
+
+    resolved = await _resolve_order_item(payload)
+    code = str(resolved.get("code") or "")
+
+    def mutate(items: list[dict[str, Any]]) -> str:
+        for item in items:
+            if str(item.get("code") or "") == code:
+                merged = max(1, _as_int(item.get("qty"), 1)) + max(1, _as_int(resolved.get("qty"), 1))
+                item["qty"] = min(MAX_ITEM_QTY, merged)
+                item["amount"] = round(_as_float(item["qty"]) * _price_of(item), 2)
+                return f"购物车加量：{code} × {item['qty']}"
+        items.append(dict(resolved))
+        return f"购物车新增：{code} × {resolved.get('qty')}"
+
+    return await _edit_items(
+        order_id,
+        mutate,
+        action_label="修改购物车明细",
+        trace_id=trace_id,
+        operator=str(getattr(payload, "operator", "") or ""),
+    )
+
+
+async def update_order_item(
+    order_id: int, code: str, payload: OrderItemUpdateRequest, *, trace_id: str
+) -> dict | None:
+    """改数量（PATCH /parts/orders/{order_id}/items/{code}，仅 `draft`）。
+
+    数量取 1~999；明细不存在 -> 404 ITEM_NOT_FOUND；非草稿 -> 409 INVALID_STATE。
+    """
+
+    wanted = str(code or "").strip()
+    qty = max(1, min(MAX_ITEM_QTY, _as_int(getattr(payload, "qty", 1), 1)))
+
+    def mutate(items: list[dict[str, Any]]) -> str:
+        for item in items:
+            if str(item.get("code") or "").lower() == wanted.lower():
+                item["qty"] = qty
+                item["amount"] = round(qty * _price_of(item), 2)
+                return f"购物车改量：{wanted} × {qty}"
+        raise ServiceError(404, "ITEM_NOT_FOUND", f"购物车里没有该备件：{wanted}", {"code": wanted})
+
+    return await _edit_items(
+        order_id,
+        mutate,
+        action_label="修改购物车明细",
+        trace_id=trace_id,
+        operator=str(getattr(payload, "operator", "") or ""),
+    )
+
+
+async def remove_order_item(order_id: int, code: str, *, trace_id: str) -> dict | None:
+    """移出购物车（DELETE /parts/orders/{order_id}/items/{code}，仅 `draft`）。
+
+    允许把草稿单清空（购物车为空是正常状态），但**空草稿单不能提交**（提交时 400 EMPTY_ORDER）。
+    明细不存在 -> 404 ITEM_NOT_FOUND；非草稿 -> 409 INVALID_STATE。
+    """
+
+    wanted = str(code or "").strip()
+
+    def mutate(items: list[dict[str, Any]]) -> str:
+        keep = [item for item in items if str(item.get("code") or "").lower() != wanted.lower()]
+        if len(keep) == len(items):
+            raise ServiceError(404, "ITEM_NOT_FOUND", f"购物车里没有该备件：{wanted}", {"code": wanted})
+        items[:] = keep
+        return f"购物车移除：{wanted}"
+
+    return await _edit_items(order_id, mutate, action_label="修改购物车明细", trace_id=trace_id)
+
+
 async def _advance(
     order_id: int,
     payload: OrderActionRequest,
@@ -701,9 +865,22 @@ async def _advance(
 async def submit_order(
     order_id: int, payload: OrderActionRequest, *, trace_id: str
 ) -> dict | None:
-    """提交申请（draft -> submitted）。提交即进入人工审批队列。"""
+    """提交申请（draft -> submitted）。提交即进入人工审批队列。
+
+    提交前校验**购物车不为空**：空草稿单 -> 400 EMPTY_ORDER（避免提交一张空申请单）。
+    """
 
     operator = str(payload.operator or "").strip()
+    _require_db()
+    async with db.session_scope() as session:
+        order = await session.get(PartOrder, _as_int(order_id))
+        if order is not None and str(order.status or "") == "draft" and not (order.items or []):
+            raise ServiceError(
+                400,
+                "EMPTY_ORDER",
+                f"申请单 {order.order_no} 没有明细，无法提交（请先加入备件）",
+                {"order_no": order.order_no},
+            )
     return await _advance(
         order_id,
         payload,
@@ -957,7 +1134,9 @@ async def list_settlements(
 
 __all__ = [
     "CATALOG_CODES",
+    "MAX_ITEM_QTY",
     "ORDER_STATUSES",
+    "add_order_item",
     "allowed_actions",
     "approve_order",
     "create_order",
@@ -968,6 +1147,8 @@ __all__ = [
     "list_settlements",
     "receive_order",
     "reject_order",
+    "remove_order_item",
     "settle_order",
     "submit_order",
+    "update_order_item",
 ]

@@ -403,6 +403,19 @@ class OrderItemRequest(BaseModel):
     qty: int = Field(default=1, ge=1, le=999)
     #: 是否作为替代件采购（true 时必须有依据，否则下单会被拒）
     is_substitute: bool = False
+    #: 操作人（可选，只写进订单 note 的审计行，**不落进明细**）
+    operator: str = ""
+
+
+class OrderItemUpdateRequest(BaseModel):
+    """购物车改数量（`PATCH /parts/orders/{order_id}/items/{code}`）。
+
+    只允许改数量（1~999）：编码与单价由后端回台账取，**不接受前端传价格**。
+    """
+
+    qty: int = Field(ge=1, le=999, description="新的数量（1~999）")
+    #: 操作人（可选，只写进订单 note 的审计行）
+    operator: str = ""
 
 
 class OrderCreateRequest(BaseModel):

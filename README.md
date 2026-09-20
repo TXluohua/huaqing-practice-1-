@@ -10,7 +10,7 @@
 ## 当前状态
 
 **端到端已跑通**：LangGraph 九节点主链路 + RAG 检索生成 + FastAPI 接口层 + Vue3 前端。
-**单测 125 passed；接口层 32 个接口全通（含新增的业务接口 21 个）；健康检查 7 个组件全 ok。**
+**单测 131 passed；接口层 35 个接口全通（含新增的业务接口 24 个）；健康检查 7 个组件全 ok。**
 
 | 层 | 状态 | 位置 |
 | --- | --- | --- |
@@ -18,7 +18,7 @@
 | 主图（9 节点 + 条件边） | ✅ | `backend/agents/graph.py`、`backend/agents/nodes/` |
 | 检索与生成（RAG） | ✅ | `backend/rag/`、`backend/tools/kb_tools.py` |
 | 跨源检索（MCP 工单） | ✅ | `backend/mcp_servers/ticket_server.py`、`backend/mcp_client.py` |
-| 接口层（32 个接口 + SSE） | ✅ | `backend/routers/` |
+| 接口层（35 个接口 + SSE） | ✅ | `backend/routers/` |
 | 服务层 | ✅ | `backend/services/{chat_service,kb_service,plan_service,parts_service,training_service}.py` |
 | 业务库与会话检查点 | ✅ | `backend/db.py`（12 张表）、`backend/memory.py`（检查点） |
 | 应用入口与预热 | ✅ | `backend/main.py`、`backend/dependency.py` |
@@ -68,12 +68,13 @@
 | 功能 | 端点数 | 服务层 | 数据表 | 一句话 |
 | --- | --- | --- | --- | --- |
 | 维护计划生成 | 4 | `backend/services/plan_service.py` | `maintenance_plan` | 按设备 + 运行数据，从手册**原文**抽周期算出到期项；查不到周期的如实进 `uncovered` |
-| 备件商城与采购 | 11 | `backend/services/parts_service.py` | `part_order`、`part_settlement` | 库存 / 价格 / 替代件 → 采购申请单 → 人工确认 → 收货 → 结算台账 |
+| 备件商城与采购 | 14 | `backend/services/parts_service.py` | `part_order`、`part_settlement` | 商城目录 → **购物车（= 草稿单，可加/改/删）** → 提交 → 人工确认 → 收货 → 结算台账 |
 | 考核认证 | 6 | `backend/services/training_service.py` | `training_quiz`、`training_attempt`、`certification` | 按设备出题（每题带依据）→ 判分 → 显式发证 → 到期提醒 |
 
 三条红线（**代码层强制**，不是文档约定）：
 
-1. **不对供应商发起真实下单** —— 只生成内部采购申请单，`approve` 即人工确认点；
+1. **不对供应商发起真实下单** —— 只生成内部采购申请单，`approve` 即人工确认点
+   （购物车就是草稿单，提交后明细即冻结）；
 2. **替代件必须有兼容性依据** —— 台账里查不到 `basis` 直接 `400 SUBSTITUTE_BASIS_REQUIRED`；
    禁止替代清单会随备件一起返回；
 3. **不自动发证** —— 判分接口的 `certification_id` 恒为 `null`，发证须显式调用并指定等级与
