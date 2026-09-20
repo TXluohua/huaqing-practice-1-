@@ -30,6 +30,7 @@ from typing import Any, Sequence
 from ...rag.citation import (
     authority_score,
     enforce_citations,
+    strip_misleading_refusal_prefix,
     build_not_covered_answer,
     build_uncertain_notes,
     check_citations,
@@ -318,6 +319,11 @@ async def verify(state: AgentState) -> dict[str, Any]:
     # 45 条集上实测出现过 coverage 0.80 / 0.889 / 0.909 的正样本（其中两条因此被误拒），
     # 而 generate 里那一次归属本该保证 100% —— 与其继续追是哪条路径漏了，
     # 不如把「发出去的每条结论都有依据」变成校验前的硬前置（幂等，重复执行无副作用）。
+    # LLM 偶发「首行声明未覆盖、后面照常给答案」：放行前把这行自相矛盾的开头剥掉
+    answer, stripped_header = strip_misleading_refusal_prefix(answer)
+    if stripped_header:
+        logger.debug("已剥掉答案开头误加的「未覆盖」声明")
+
     enforcement: dict[str, Any] = {}
     if answer.strip() and blocks:
         answer, enforcement = enforce_citations(

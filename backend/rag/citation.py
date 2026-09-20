@@ -596,6 +596,11 @@ def should_reject(
         reasons.append("未检索到可用证据")
     if not (answer or "").strip():
         reasons.append("未生成答案")
+    if blocks and not check.used_ids:
+        # 有材料却一句引用都没挂 = 无法溯源（实测：LLM 只输出「无法确认…」这类软拒答时，
+        # 去掉自相矛盾的拒答开头后会剩下无引用的空壳答案）。按 fail-closed 判未覆盖。
+        reasons.append("答案未引用任何材料（无法溯源）")
+
     if check.has_fake_citation:
         reasons.append(f"引用校验不通过：存在不存在的引用编号 {check.fake_ids}")
     threshold = (
@@ -653,6 +658,29 @@ def should_reject(
     return RejectionDecision(False, "OK", [], materials)
 
 
+#: 拒答模板的首行（LLM 偶发把它当成答案开头，却继续给出正文）
+_REFUSAL_HEADER_RE = re.compile(r"^\s*知识库未覆盖该问题[，,][^\n]*?步骤[。.：:]?\s*$", re.MULTILINE)
+
+
+def strip_misleading_refusal_prefix(answer: str) -> tuple[str, bool]:
+    """剥掉「先声明未覆盖、再给答案」的那个自相矛盾的开头。
+
+    实测（图片类问题）：LLM 会在答案首行写上「知识库未覆盖该问题，不给出具体操作步骤。」
+    然后**继续给出带引用的具体步骤** —— 状态是 OK、引用也齐全，但气泡里读起来
+    像是系统在自打脸。放行时把这一行去掉；若去掉后没有内容了，说明模型确实是在拒答，
+    那就交给 verify 正常拒答（此时返回空串，verify 会以「未生成答案」处理）。
+    """
+
+    text = answer or ""
+    if not _REFUSAL_HEADER_RE.search(text):
+        return answer, False
+    stripped = _REFUSAL_HEADER_RE.sub("", text, count=1)
+    # 只剩空白 → 视为「模型确实在拒答」，不要伪装成有答案
+    if not stripped.strip():
+        return "", True
+    return stripped.lstrip("\n").strip(), True
+
+
 def build_not_covered_answer(decision: RejectionDecision) -> str:
     """拒答话术：只给材料清单与建议，**不给操作步骤**。"""
 
@@ -678,6 +706,7 @@ __all__ = [
     "authority_score",
     "best_supporting_block",
     "enforce_citations",
+    "strip_misleading_refusal_prefix",
     "build_not_covered_answer",
     "build_uncertain_notes",
     "check_citations",

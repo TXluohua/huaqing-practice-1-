@@ -18,6 +18,7 @@ from backend.agents.state import Evidence  # noqa: E402
 from backend.rag.citation import (  # noqa: E402
     anchor_check,
     enforce_citations,
+    strip_misleading_refusal_prefix,
     build_not_covered_answer,
     check_citations,
     compute_confidence,
@@ -252,6 +253,23 @@ def test_enforce_citations_processes_each_sentence_not_whole_line() -> None:
     # 结论句全被省略时是「空分母」：不应被算成覆盖率不达标
     assert check.total_claims == 0 or check.coverage == 1.0, (check.total_claims, check.coverage)
     assert "| 参数 | 值 |" in fixed and "```" in fixed, "结构化行必须原样保留"
+
+
+def test_strip_misleading_refusal_prefix() -> None:
+    """「先声明未覆盖、再给答案」的开头要剥掉；纯粹拒答则保持空（交给 verify 拒答）。"""
+
+    hybrid = "知识库未覆盖该问题，不给出具体操作步骤。\n\n- 先检查腔体门 O-ring [1]。"
+    fixed, stripped = strip_misleading_refusal_prefix(hybrid)
+    assert stripped is True
+    assert "知识库未覆盖" not in fixed and "O-ring" in fixed
+
+    pure_refusal = "知识库未覆盖该问题，不给出具体操作步骤。"
+    fixed2, stripped2 = strip_misleading_refusal_prefix(pure_refusal)
+    assert stripped2 is True and fixed2 == "", "纯拒答不应被伪装成有答案"
+
+    normal = "- 先检查腔体门 O-ring [1]。"
+    fixed3, stripped3 = strip_misleading_refusal_prefix(normal)
+    assert stripped3 is False and fixed3 == normal
 
 
 def test_enforce_citations_keeps_non_claim_lines() -> None:
