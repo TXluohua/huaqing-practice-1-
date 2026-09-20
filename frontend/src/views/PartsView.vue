@@ -182,10 +182,41 @@ async function loadCart(): Promise<void> {
 }
 
 /**
+ * 建一张空购物车。
+ *
+ * 后端允许零明细草稿单（`POST /api/parts/orders` 的 `items` 可为空），
+ * 所以购物车不必等第一件备件才存在：用户可以先建车、再慢慢挑。
+ * 空车**不能提交**（提交会收到 400 `EMPTY_ORDER`），这一点在界面上写明了。
+ */
+async function createEmptyCart(): Promise<void> {
+  if (cartBusy.value) return
+  // 已经有一张可改的空车就直接复用，避免连点产生一串空草稿单
+  if (cart.value && cartEditable.value && cart.value.items.length === 0) {
+    ElMessage.info(`已有一张空购物车（${cart.value.order_no}），直接加入备件即可。`)
+    return
+  }
+  cartBusy.value = true
+  try {
+    cart.value = await createOrder({
+      items: [],
+      device_model: filter.deviceModel.trim() || undefined,
+      purpose: purpose.value.trim() || undefined,
+      applicant: applicant.value.trim() || undefined,
+      note: '由备件商城新建空购物车',
+    })
+    ElMessage.success(`已建立空购物车 ${cart.value.order_no}，可以逐件加入备件`)
+  } catch (error) {
+    ElMessage.error(humanizeError(error))
+  } finally {
+    cartBusy.value = false
+  }
+}
+
+/**
  * 加入购物车。
  *
- * 没有草稿单（或上一张已提交）时先建单，把这一件作为初始明细 —— 一条请求搞定，
- * 且不会产生后端拒绝的「零明细草稿单」。
+ * 没有草稿单（或上一张已提交）时先建单，把这一件作为初始明细 —— 一条请求搞定。
+ * 也可以先用「新建空购物车」建一张空车（见 createEmptyCart）。
  */
 async function addToCart(code: string, isSubstitute = false): Promise<void> {
   if (cartBusy.value) return
@@ -274,14 +305,6 @@ async function onSubmitOrder(): Promise<void> {
   } finally {
     submitting.value = false
   }
-}
-
-/** 开一张新的草稿单：仅清空本地引用，下一件备件加入时自动建单 */
-function startNewCart(): void {
-  cart.value = null
-  applicant.value = ''
-  purpose.value = ''
-  ElMessage.info('已开始新的购物车，加入备件时会自动建立草稿申请单。')
 }
 
 function goProcurement(): void {
@@ -423,7 +446,15 @@ onMounted(() => {
                 「新建购物车」会另开一张草稿单，原草稿单仍留在采购页。
               </p>
             </div>
-            <el-button size="small" link type="primary" @click="startNewCart">新建购物车</el-button>
+            <el-button
+              size="small"
+              link
+              type="primary"
+              :loading="cartBusy"
+              @click="createEmptyCart"
+            >
+              新建空购物车
+            </el-button>
           </div>
 
           <div class="panel__body cart__body">
@@ -459,6 +490,22 @@ onMounted(() => {
                 </p>
               </div>
 
+              <!-- 还没有购物车：直接给一个「建空车」的入口，而不是让用户去猜要等第一件备件 -->
+              <el-empty
+                v-if="!cart"
+                :image-size="70"
+                description="还没有购物车：可以新建一张空车，也可以直接从左侧加入备件"
+              >
+                <el-button
+                  size="small"
+                  type="primary"
+                  :loading="cartBusy"
+                  @click="createEmptyCart"
+                >
+                  新建空购物车
+                </el-button>
+              </el-empty>
+
               <template v-if="cart">
                 <div class="cart__meta">
                   <span class="cart__no text-mono">{{ cart.order_no }}</span>
@@ -469,7 +516,7 @@ onMounted(() => {
                 <el-empty
                   v-if="cart.items.length === 0"
                   :image-size="70"
-                  description="购物车是空的：从左侧「加入购物车」开始"
+                  description="购物车是空的：从左侧「加入购物车」开始（空车不能提交）"
                 />
 
                 <ul v-else class="cart__list">
@@ -546,7 +593,7 @@ onMounted(() => {
                 <template v-else>
                   <p class="hint">
                     该申请单已提交（单号 {{ cart.order_no }}），明细已冻结，改数量 / 移出入口已关闭。
-                    请到采购结算页跟踪状态；要继续选件请点「新建购物车」。
+                    请到采购结算页跟踪状态；要继续选件请点「新建空购物车」。
                   </p>
                   <el-button class="cart__submit" size="small" type="primary" plain @click="goProcurement">
                     去采购结算页

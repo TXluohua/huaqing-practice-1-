@@ -17,7 +17,7 @@
  *   * 结算**只登记台账，不做财务过账**；同一订单重复结算后端返回 409 `ALREADY_SETTLED`。
  */
 import { Refresh, Search } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
@@ -133,9 +133,22 @@ const noteLines = computed(() =>
 /** 动作按钮的唯一来源：后端响应里的 `allowed_actions` */
 const allowedActions = computed(() => detail.value?.allowed_actions ?? [])
 
+/**
+ * 本单是否已经登记过结算。
+ *
+ * 后端「结算幂等」：同一订单重复结算返回 409 `ALREADY_SETTLED`。
+ * 但 `allowed_actions` 只按**状态**给（`received` 永远是 `['settle']`），
+ * 所以已结算的订单还会显示「登记结算」按钮 —— 那是必然报错的按钮，界面上不该留。
+ * 这里在打开详情时按 `order_no` 查一次结算台账，命中就把 settle 摘掉。
+ */
+const detailSettled = ref(false)
+
 /** 直接点击即执行的动作（reject / cancel 需要先填原因，单独成块） */
 const directActions = computed(() =>
-  allowedActions.value.filter((action) => action !== 'reject' && action !== 'cancel'),
+  allowedActions.value.filter(
+    (action) =>
+      action !== 'reject' && action !== 'cancel' && !(action === 'settle' && detailSettled.value),
+  ),
 )
 const canReject = computed(() => allowedActions.value.includes('reject'))
 const canCancel = computed(() => allowedActions.value.includes('cancel'))
@@ -165,11 +178,28 @@ async function refreshDetail(): Promise<void> {
     const response = await getOrder(orderId)
     detail.value = response
     if (!operator.value) operator.value = response.applicant
+    // 已结算的订单不再提供「登记结算」（重复结算必定 409，是个假按钮）
+    detailSettled.value = await hasSettlement(response.order_no)
   } catch (error) {
     detail.value = null
+    detailSettled.value = false
     detailError.value = isApiError(error) ? error : null
   } finally {
     detailLoading.value = false
+  }
+}
+
+/**
+ * 这张单有没有结算记录（按单号在结算台账里查一条）。
+ * 台账查询失败时**当作「已结算」处理**：宁可少给一个按钮，也不要给一个必然报错的按钮。
+ */
+async function hasSettlement(orderNo: string): Promise<boolean> {
+  if (!orderNo) return false
+  try {
+    const response = await listSettlements({ order_no: orderNo, limit: 1 })
+    return response.items.some((item) => item.order_no === orderNo)
+  } catch {
+    return true
   }
 }
 
@@ -218,6 +248,28 @@ async function onDirectAction(action: string): Promise<void> {
   }
 
   const payload = { operator: operator.value.trim() || undefined }
+
+  // 「人工确认」是系统唯一的确认点：确认后才允许收货与结算，且系统不会向供应商真实下单。
+  // 这是不可撤销的关键动作，必须二次确认（submit / receive 属于可预期的常规操作，不拦）。
+  if (action === 'approve') {
+    const confirmed = await ElMessageBox.confirm(
+      `确认为申请单 ${order.order_no} 办理「人工确认」？\n\n` +
+        `· 确认后该单进入「已确认」，才允许收货与结算；\n` +
+        `· 本系统只生成内部采购申请，不会向供应商发起真实下单；\n` +
+        `· 合计金额 ${amountText(order.total_amount)}（台账价格，未经财务过账）。`,
+      '人工确认',
+      {
+        confirmButtonText: '确认（人工确认）',
+        cancelButtonText: '再看看',
+        type: 'warning',
+        distinguishCancelAndClose: true,
+      },
+    )
+      .then(() => true)
+      .catch(() => false)
+    if (!confirmed) return
+  }
+
   if (action === 'submit') await runOrderAction(action, () => submitOrder(order.id, payload))
   else if (action === 'approve') await runOrderAction(action, () => approveOrder(order.id, payload))
   else if (action === 'receive') await runOrderAction(action, () => receiveOrder(order.id, payload))
@@ -297,6 +349,7 @@ async function submitSettle(): Promise<void> {
       operator: settleForm.operator.trim() || undefined,
     })
     settleVisible.value = false
+    detailSettled.value = true
     ElMessage.success(`已登记结算 ${settlement.order_no}：${amountText(settlement.amount)}（只登记台账，财务以 ERP 为准）`)
     await refreshDetail()
     await loadOrders()

@@ -27,7 +27,7 @@
 | 应用入口与预热 | ✅ | `backend/main.py`、`backend/dependency.py` |
 | 部署产物 | ✅ | `deploy/`、`docker-compose.yml`（nginx 已关 SSE 缓冲） |
 | 前端（问答主链路） | ✅ | `frontend/`（Vue3 + Vite + Element Plus）：`/chat`、`/history`、`/admin` |
-| 前端（三块新业务） | ✅ 独立页面已就位，⏳ 打磨待第三人 | **独立路由** `/plans`、`/parts`、`/procurement`、`/training`，顶栏与问答分组并列，见 `前端对接说明（三块新业务）.md` |
+| 前端（三块新业务） | ✅ 独立页面已可用（首轮打磨已完成） | **独立路由** `/plans`、`/parts`、`/procurement`、`/training`，顶栏与问答分组并列；设备筛选、空车入口、人工确认二次确认、已结算不再给假按钮、认证记录分页都已补，见 `前端对接说明（三块新业务）.md` |
 
 ### 实测指标（真实 LLM + 真实 VLM，2026-09-20）
 
