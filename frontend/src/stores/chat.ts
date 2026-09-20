@@ -54,7 +54,7 @@ export interface UploadedImage {
 export interface UiMessage {
   /** 前端稳定 key。不用数组下标：列表会整体替换，下标做 key 会导致渲染错位 */
   localId: string
-  /** 历史消息有；流式新消息为 null（契约缺口：done 事件不带 qa_id） */
+  /** 历史消息由接口返回；流式新消息由 done 事件回填（后端 DoneEvent.qa_id） */
   qaId: number | null
   role: 'user' | 'assistant'
   content: string
@@ -304,6 +304,8 @@ export const useChatStore = defineStore('chat', () => {
           message.confidence = data.confidence
           message.confidenceLabel = data.label
           message.uncertain = data.uncertain ?? []
+          // done 事件带回本轮 qa_id，反馈按钮据此解锁（否则要刷新历史页才拿得到）
+          message.qaId = data.qa_id ?? null
           message.latencyMs = Math.round(performance.now() - startedAt)
           // status=ERROR 是链路异常，按错误态渲染；NOT_COVERED 是正常拒答，不是错误
           message.phase = data.status === 'ERROR' ? 'error' : 'done'

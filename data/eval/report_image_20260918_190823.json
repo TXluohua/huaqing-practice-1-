@@ -1,0 +1,216 @@
+{
+  "generated_at": "2026-09-18T19:08:23",
+  "golden": "/home/lei/qiye_project1/data/eval/golden_image.jsonl",
+  "fixture_dir": "/home/lei/qiye_project1/data/eval/fixtures",
+  "summary": {
+    "n_items": 5,
+    "n_passed": 2,
+    "all_passed": false
+  },
+  "items": [
+    {
+      "id": "img001",
+      "question": "这个报警怎么处理？",
+      "negative": false,
+      "image_id": "golden_img001",
+      "status": "NOT_COVERED",
+      "passed": false,
+      "reason": "抽取成功但链路未作答（status=NOT_COVERED）",
+      "latency_s": 33.01,
+      "image_type": "alarm_screen",
+      "confidence": 0.98,
+      "extracted": {
+        "alarm_codes": [
+          "E-2041"
+        ],
+        "device_model": "Etcher-A",
+        "parameters": [
+          {
+            "name": "腔体压力",
+            "value": "68.4",
+            "unit": "Pa"
+          }
+        ],
+        "table_md": "| 发生时间 | 2026-09-18 14:26:31 |\n| 设备状态 | 已停机 腔体压力 68.4 Pa |"
+      },
+      "raw_text": "设备报警 · Etcher-A\nE-2041\n腔体压力异常\n腔体压力连续 3 s 超过工艺设定值的 150%\n发生时间 2026-09-18 14:26:31\n设备状态 已停机 腔体压力 68.4 Pa\n查看详情 确认",
+      "errors": [
+        "外部数据源调用失败（ticket_search）：'白名单工具 ticket_search 未注册（本地工具缺失或 MCP 未加载）'",
+        "引用归属：3 句结论因无法归属到上下文块被省略"
+      ],
+      "answer_head": "知识库未覆盖该问题，不给出具体操作步骤。\n已检索到的相关材料：《刻蚀设备维护手册》 V3.2 第 6 页；《CVD 薄膜沉积工艺规范》 V2.0 第 5 页；《刻蚀设备维护手册》 V3.2 第 5 页；《设备维护安全作业标准》 V1.1 第 6 页；《清洗设备操作与维护指南》 V2.1 第 3 页\n建议：补充设备型号与现象描述，或转人工支持。",
+      "n_citations": 0
+    },
+    {
+      "id": "img002",
+      "question": "这张参数表里的沉积温度、腔体压力和硅烷流量分别是多少？",
+      "negative": false,
+      "image_id": "golden_img002",
+      "status": "OK",
+      "passed": true,
+      "reason": "抽取与作答均正常",
+      "latency_s": 14.19,
+      "image_type": "parameter_table",
+      "confidence": 0.98,
+      "extracted": {
+        "device_model": "CVD-200",
+        "parameters": [
+          {
+            "name": "沉积温度",
+            "value": "780",
+            "unit": "℃"
+          },
+          {
+            "name": "腔体压力",
+            "value": "300",
+            "unit": "Pa"
+          },
+          {
+            "name": "SiH4 流量",
+            "value": "350",
+            "unit": "sccm"
+          },
+          {
+            "name": "NH3 流量",
+            "value": "120",
+            "unit": "sccm"
+          },
+          {
+            "name": "射频功率",
+            "value": "450",
+            "unit": "W"
+          },
+          {
+            "name": "沉积时间",
+            "value": "180",
+            "unit": "s"
+          }
+        ],
+        "table_md": "| 参数名称 | 工艺设定值 |\n| --- | --- |\n| 沉积温度 | 780 ℃ |\n| 腔体压力 | 300 Pa |\n| SiH4 流量 | 350 sccm |\n| NH3 流量 | 120 sccm |\n| 射频功率 | 450 W |\n| 沉积时间 | 180 s |"
+      },
+      "raw_text": "CVD-200 薄膜沉积工艺参数表\n参数名称\t工艺设定值\n沉积温度\t780 ℃\n腔体压力\t300 Pa\nSiH4 流量\t350 sccm\nNH3 流量\t120 sccm\n射频功率\t450 W\n沉积时间\t180 s\n注：以上为 LPCVD 氮化硅标准工艺窗口，超窗口需工艺工程师审批。",
+      "errors": [
+        "引用归属：1 句结论因无法归属到上下文块被省略"
+      ],
+      "answer_head": "知识库中未找到「这张参数表」所指的具体表格，无法据此给出该表的沉积温度、腔体压力和硅烷流量数值。\n\n\n- 沉积温度：LPCVD 氮化硅温度窗口 750~800 ℃，工艺典型值 780 ℃ [2]；PECVD 二氧化硅温度窗口 350~400 ℃，工艺典型值 380 ℃[2]。\n- 腔体压力：沉积压力范围 100~500 Pa，工艺典型值 300 Pa[3,6]。\n- 硅烷流量：SiH₄ 流量范围 200~600 sccm，工艺典型值 350 sccm[1]。\n\n依据：\n- [1] 《CVD 薄膜沉积工艺规范》 V2.0 第 4 页 章节 2.3\n- [2] 《CVD 薄膜沉积工艺规范》 V2.",
+      "n_citations": 8
+    },
+    {
+      "id": "img003",
+      "question": "这张手写纸条上写的是什么？",
+      "negative": true,
+      "image_id": "golden_img003",
+      "status": "NOT_COVERED",
+      "passed": true,
+      "reason": "正确拒答 + 提示改用文字",
+      "latency_s": 3.9,
+      "image_type": "unknown",
+      "confidence": 0.1,
+      "extracted": {},
+      "raw_text": "",
+      "errors": [
+        "图片未能识别（type=unknown, confidence=0.10），请用文字描述现象",
+        "图片识别结果为空，本次仅按文本问题检索",
+        "引用归属：2 句结论因无法归属到上下文块被省略"
+      ],
+      "answer_head": "知识库未覆盖该问题，不给出具体操作步骤。\n已检索到的相关材料：《设备维护安全作业标准》 V1.1 第 1 页；《备件目录与替代件说明》 V1.4 第 5 页；《设备维护安全作业标准》 V1.1 第 3 页；《设备维护安全作业标准》 V1.1 第 2 页；《设备维护安全作业标准》 V1.1 第 4 页\n建议：补充设备型号与现象描述，或转人工支持。",
+      "n_citations": 0
+    },
+    {
+      "id": "img004",
+      "question": "CVD-200 报这个警，应该怎么处理？",
+      "negative": false,
+      "image_id": "golden_img004",
+      "status": "NOT_COVERED",
+      "passed": false,
+      "reason": "抽取成功但链路未作答（status=NOT_COVERED）",
+      "latency_s": 13.76,
+      "image_type": "alarm_screen",
+      "confidence": 0.98,
+      "extracted": {
+        "alarm_codes": [
+          "E-3061"
+        ],
+        "device_model": "CVD-200",
+        "parameters": [
+          {
+            "name": "设定温度",
+            "value": "780",
+            "unit": "℃"
+          },
+          {
+            "name": "实测温度",
+            "value": "800.6",
+            "unit": "℃"
+          },
+          {
+            "name": "发生时间",
+            "value": "2026-09-18 09:41:07"
+          }
+        ],
+        "alarm_description": "温度超限",
+        "trigger_condition": "实测温度偏离设定值 ±8 ℃ 时触发",
+        "status": "已暂停批次"
+      },
+      "raw_text": "工艺报警 · CVD-200\nE-3061\n温度超限\n实测温度偏离设定值 ±8 ℃ 时触发\n设定温度 780 ℃\n实测温度 800.6 ℃ 已暂停批次\n发生时间 2026-09-18 09:41:07",
+      "errors": [
+        "外部数据源调用失败（ticket_search）：'白名单工具 ticket_search 未注册（本地工具缺失或 MCP 未加载）'",
+        "引用归属：2 句结论因无法归属到上下文块被省略"
+      ],
+      "answer_head": "知识库未覆盖该问题，不给出具体操作步骤。\n已检索到的相关材料：《CVD 薄膜沉积工艺规范》 V2.0 第 1 页；《刻蚀设备维护手册》 V3.2 第 5 页；《刻蚀设备维护手册》 V3.2 第 6 页；《CVD 薄膜沉积工艺规范》 V2.0 第 5 页；《刻蚀设备维护手册》 V3.2 第 2 页\n建议：补充设备型号与现象描述，或转人工支持。",
+      "n_citations": 0
+    },
+    {
+      "id": "img005",
+      "question": "这个备件标签上的编码和规格是什么？更换周期多久？",
+      "negative": false,
+      "image_id": "golden_img005",
+      "status": "NOT_COVERED",
+      "passed": false,
+      "reason": "抽取成功但链路未作答（status=NOT_COVERED）",
+      "latency_s": 14.91,
+      "image_type": "parameter_table",
+      "confidence": 0.98,
+      "extracted": {
+        "device_model": "SP-ETA-0101",
+        "parameters": [
+          {
+            "name": "品名",
+            "value": "腔体门 O-ring"
+          },
+          {
+            "name": "编码",
+            "value": "SP-ETA-0101"
+          },
+          {
+            "name": "材质",
+            "value": "FKM"
+          },
+          {
+            "name": "硬度",
+            "value": "70 Shore A"
+          },
+          {
+            "name": "内径 × 线径",
+            "value": "320 mm × 5.33 mm"
+          },
+          {
+            "name": "耐温",
+            "value": "-20~200 ℃"
+          },
+          {
+            "name": "更换周期",
+            "value": "3 个月或每次开腔维护后"
+          }
+        ],
+        "table_md": "| 品名 | 腔体门 O-ring |\n| 编码 | SP-ETA-0101 |\n| 材质 | FKM |\n| 硬度 | 70 Shore A |\n| 内径 × 线径 | 320 mm × 5.33 mm |\n| 耐温 | -20~200 ℃ |\n| 更换周期 | 3 个月或每次开腔维护后 |"
+      },
+      "raw_text": "备件规格标签\n品名 腔体门 O-ring\n编码 SP-ETA-0101\n材质 FKM\n硬度 70 Shore A\n内径 × 线径 320 mm × 5.33 mm\n耐温 -20~200 ℃\n更换周期 3 个月或每次开腔维护后\n注：替代件须满足线径公差 ±0.05 mm、硬度偏差 ±5 Shore A",
+      "errors": [
+        "引用归属：2 句结论因无法归属到上下文块被省略"
+      ],
+      "answer_head": "知识库未覆盖该问题，不给出具体操作步骤。\n已检索到的相关材料：《备件库存台账》 示例数据 第 1 页；《备件目录与替代件说明》 V1.4 第 4 页；《备件目录与替代件说明》 V1.4 第 2 页；《备件目录与替代件说明》 V1.4 第 1 页；《备件目录与替代件说明》 V1.4 第 6 页\n建议：补充设备型号与现象描述，或转人工支持。",
+      "n_citations": 0
+    }
+  ]
+}

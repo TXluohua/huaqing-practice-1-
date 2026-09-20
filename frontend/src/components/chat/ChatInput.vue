@@ -10,6 +10,9 @@
  *     必须 preventDefault，否则浏览器会把图片粘贴成 base64 塞进输入框。
  *   - **培训模式**是接口文档 §8 的缺口①（state.py 没有该字段），
  *     照发但标注「实验性」，后端拒绝时按普通错误提示，不影响问答主链路。
+ *   - **快捷提问**（FR-09 备件查询）：后端 `parts_query` 已接进链路，但三个视图都没有入口，
+ *     用户不知道「备件/替代件」也能问。这里给几个模板按钮，点一下把问题填进输入框并聚焦，
+ *     **不直接发送** —— 模板里的部件名/型号要用户自己替换，直接发出去只会得到拒答。
  *
  * 视觉上整个输入区是一张卡片：工具栏、文本框、按钮都在同一张卡里，
  * 而不是「文本框 + 一排按钮」拼起来。所以 textarea 自身不要边框，
@@ -31,6 +34,28 @@ const text = ref('')
 const showFilters = ref(false)
 /** el-upload 需要 ref 才能手动触发选择文件 */
 const uploadRef = ref()
+/** el-input 的 ref，快捷提问填充后要把光标送进去 */
+const inputRef = ref<{ focus: () => void } | null>(null)
+
+/**
+ * 快捷提问模板（FR-09）。后端 parts_query 已接进链路，问题在于入口不可见。
+ * 模板故意留 `<部件名>` / `<型号>` 占位符：备件问题的答案依赖台账里的具体件号，
+ * 拿一个不存在的件号去问只会触发 fail-closed 拒答，反而误导用户。
+ */
+const QUICK_ASKS: { label: string; text: string }[] = [
+  {
+    label: '备件库存',
+    text: '腔体门 O-ring 还有库存吗？有没有替代件、多久到货？',
+  },
+  {
+    label: '替代件',
+    text: '<部件名> 缺货时可以用什么材料替代？有哪些限制和兼容性依据？',
+  },
+  {
+    label: '参数查询',
+    text: 'CVD 沉积温度的工艺窗口是多少？超窗口会有什么后果？',
+  },
+]
 /** 卡片聚焦态由自己维护：textarea 的 focus 事件在 EP 里被包了一层 */
 const focused = ref(false)
 
@@ -56,6 +81,21 @@ async function submit(): Promise<void> {
   } catch (error) {
     ElMessage.error(humanizeError(error))
   }
+}
+
+/**
+ * 快捷提问：填进输入框并聚焦，**不自动发送**。
+ * 已有草稿时不覆盖 —— 用户可能写了一半，点模板只是想参考措辞；
+ * 覆盖用户输入是不可逆的，而追加又会让两种意图混在一句里。
+ */
+function useQuickAsk(item: { text: string }): void {
+  if (text.value.trim() && text.value.trim() !== item.text) {
+    ElMessage.info('输入框已有内容，快捷提问未覆盖，请先清空或手动编辑。')
+    inputRef.value?.focus()
+    return
+  }
+  text.value = item.text
+  inputRef.value?.focus()
 }
 
 /** Enter 发送、Shift+Enter 换行（中文输入法组合态下不触发） */
@@ -132,9 +172,25 @@ onBeforeUnmount(() => {
         </div>
       </transition>
 
+      <!-- 快捷提问：让「备件 / 替代件 / 参数」这类能力可见（FR-09） -->
+      <div class="composer__quick">
+        <span class="composer__quick-label">快捷提问</span>
+        <button
+          v-for="item in QUICK_ASKS"
+          :key="item.label"
+          class="composer__quick-btn"
+          type="button"
+          :disabled="chatStore.streaming"
+          @click="useQuickAsk(item)"
+        >
+          {{ item.label }}
+        </button>
+      </div>
+
       <!-- 输入卡片 -->
       <div class="composer__card" :class="{ 'composer__card--focus': focused }">
         <el-input
+          ref="inputRef"
           v-model="text"
           class="composer__textarea"
           type="textarea"
@@ -262,6 +318,45 @@ onBeforeUnmount(() => {
   background: var(--surface-0);
   border: 1px solid var(--line-1);
   border-radius: var(--r-md);
+}
+
+/* 快捷提问：pill 描边按钮，视觉重量低于发送按钮，避免和主行动抢注意力 */
+.composer__quick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  align-items: center;
+  margin-bottom: var(--sp-2);
+  padding: 0 2px;
+}
+
+.composer__quick-label {
+  font-size: var(--fs-xs);
+  color: var(--ink-400);
+}
+
+.composer__quick-btn {
+  padding: 3px 11px;
+  font-family: inherit;
+  font-size: var(--fs-xs);
+  color: var(--ink-500);
+  cursor: pointer;
+  background: var(--surface-0);
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-pill);
+  transition: color 0.15s var(--ease), border-color 0.15s var(--ease),
+    background 0.15s var(--ease);
+}
+
+.composer__quick-btn:hover:not(:disabled) {
+  color: var(--brand-600);
+  background: var(--brand-50);
+  border-color: var(--brand-100);
+}
+
+.composer__quick-btn:disabled {
+  color: var(--ink-300);
+  cursor: not-allowed;
 }
 
 .composer__filters {

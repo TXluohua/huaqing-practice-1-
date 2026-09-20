@@ -1,0 +1,38 @@
+{
+  "generated_at": "2026-09-18T19:27:37",
+  "base_url": "http://127.0.0.1:8000",
+  "rounds": [
+    {
+      "concurrency": 20,
+      "n_ok": 20,
+      "n_failed": 0,
+      "error_rate": 0.0,
+      "wall_s": 190.114,
+      "total_p50_s": 176.5,
+      "total_p95_s": 189.882,
+      "first_token_p50_s": 176.477,
+      "first_token_p95_s": 189.855,
+      "status_counts": {
+        "OK": 20
+      },
+      "verdict": "勉强支撑（P95 > 60s，排队明显）",
+      "failures": []
+    }
+  ],
+  "worst_round": {
+    "concurrency": 20,
+    "n_ok": 20,
+    "n_failed": 0,
+    "error_rate": 0.0,
+    "wall_s": 190.114,
+    "total_p50_s": 176.5,
+    "total_p95_s": 189.882,
+    "first_token_p50_s": 176.477,
+    "first_token_p95_s": 189.855,
+    "status_counts": {
+      "OK": 20
+    },
+    "verdict": "勉强支撑（P95 > 60s，排队明显）",
+    "failures": []
+  }
+}
