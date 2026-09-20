@@ -103,9 +103,19 @@ onMounted(() => void checkHealth())
       </div>
 
       <nav class="app__nav">
-        <router-link to="/chat" class="app__nav-item">问答</router-link>
-        <router-link to="/history" class="app__nav-item">历史会话</router-link>
-        <router-link to="/admin" class="app__nav-item">管理</router-link>
+        <span class="app__nav-group">
+          <router-link to="/chat" class="app__nav-item">问答</router-link>
+          <router-link to="/history" class="app__nav-item">历史会话</router-link>
+          <router-link to="/admin" class="app__nav-item">管理</router-link>
+        </span>
+        <!-- 业务组与问答组是两条独立链路：不共享会话、不走 SSE、也不依赖问答链路是否可用 -->
+        <span class="app__nav-divider" aria-hidden="true" />
+        <span class="app__nav-group">
+          <router-link to="/plans" class="app__nav-item">维护计划</router-link>
+          <router-link to="/parts" class="app__nav-item">备件商城</router-link>
+          <router-link to="/procurement" class="app__nav-item">采购结算</router-link>
+          <router-link to="/training" class="app__nav-item">考核认证</router-link>
+        </span>
       </nav>
 
       <div class="app__status">
@@ -249,15 +259,37 @@ onMounted(() => void checkHealth())
 /* -------------------------------------------------- 导航：分段控件式 */
 .app__nav {
   display: flex;
+  align-items: center;
   gap: 2px;
   padding: 3px;
   /* 宽度随内容收缩 + 左右 auto 外边距 = 居中。
      不要加 flex: 1：那会让 flex-basis 变成 0 并吃满剩余空间，
      fit-content 失效，分段控件在宽屏上被拉成一条长条。 */
   width: fit-content;
+  /* 7 个入口在窄屏上会超出：允许横向滚动，而不是把品牌与状态挤变形 */
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
   margin: 0 auto;
   background: var(--surface-2);
   border-radius: var(--r-md);
+}
+
+.app__nav::-webkit-scrollbar {
+  display: none;
+}
+
+/* 两组导航（问答 / 业务）内部各自不换行，组间用一条竖线分隔 */
+.app__nav-group {
+  display: flex;
+  gap: 2px;
+}
+
+.app__nav-divider {
+  align-self: stretch;
+  width: 1px;
+  margin: 2px 6px;
+  background: var(--line-1);
 }
 
 .app__nav-item {
