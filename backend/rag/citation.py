@@ -36,7 +36,13 @@ _NO_CITE_PATTERNS = (
     re.compile(r"^[\s\-*\d.、]*依据\s*[:：]"),
     # 纯引用行，如「- [1] 《刻蚀设备维护手册》 V3.2 第 3 页 章节 3.4」
     re.compile(r"^[\s\-*\d.、]*\[\d+(?:\s*[,，]\s*\d+)*\]"),
-    re.compile(r"^[\s\-*\d.、]*《.+》\s*V?[\d.]+.*(页|章节)"),
+    # 注意：这里**故意不再**用「以《…》开头 + 版本/页/章节」来判断纯引用行。
+    # 那条规则过宽，会把「带正文的引文行」也豁免掉 —— 实测有一条回答整段都是
+    # 「- 《备件库存台账》 示例数据 第 1 页：明确记载「…」[1]」这种**有正文**的句子，
+    # 被判成纯引用行后结论句数为 0，覆盖率分母为空（评测里按 100% 计，
+    # 指标形同虚设，report 里以 `citation_coverage_vacuous` 暴露出来）。
+    # 现在改由 `_is_bare_attribution()` 按「剥掉归属成分后还剩多少实义内容」判断：
+    # 真的只有文档名/版本/页/章节才豁免。
     # Markdown 粗体小标题整行（如「**基础理解**」）：结构行，不是知识结论
     re.compile(r"^\*{1,2}[^*\n]{1,40}\*{1,2}\s*[：:]?\s*$"),
 )
@@ -111,14 +117,54 @@ def parse_citation_ids(text: str) -> list[int]:
     return list(dict.fromkeys(ids))
 
 
+#: 「纯归属行」剥离用：引用标记、文档名、版本号、页/章节等归属成分
+_ATTR_VERSION_RE = re.compile(r"V?\d+(?:\.\d+)*")
+_ATTR_WORD_RE = re.compile(r"(第|页|章节|版本|示例数据|目录|unknown)")
+_ATTR_LEFTOVER_RE = re.compile(r"[\s\-*、.,，。:：;；()（）\[\]「」『』\"'*#|]+")
+
+#: 剥掉归属成分后，剩下的实义内容少于这个字数 → 认为只是「归属行」而非结论句
+_BARE_ATTRIBUTION_MAX = 12
+
+#: 「像归属行」的形状：必须先出现文档名 / 第 N 页 / 章节 N 这类出处描述。
+#: 没有出处描述的句子一律按普通句子处理 —— 否则「天气也不错，适合郊游。」这种
+#: 短句会因为凑不满字数被误判成归属行，从而逃过引用归属（实测踩到过）。
+_ATTRIBUTION_SHAPE_RE = re.compile(r"《[^》]*》|第\s*\d+\s*页|章节\s*\d|§\s*\d")
+
+
+def _is_bare_attribution(sentence: str) -> bool:
+    """判断一句是不是「纯归属行」——只交代依据出处，本身不陈述知识。
+
+    例：
+        `- 《刻蚀设备维护手册》 V3.2 第 3 页 章节 3.4`            -> 纯归属行（不参与覆盖率）
+        `- [1] 《刻蚀设备维护手册》 V3.2 第 3 页 章节 3.4`         -> 纯归属行
+        `- 《备件库存台账》 示例数据 第 1 页：明确记载「…」[1]`      -> **不是**（有正文，是结论句）
+
+    做法：把引用标记、文档名、版本号、页/章节等归属成分剥掉，看还剩多少实义文字。
+    必须用「剩余内容」判断而不是「是否以《…》开头」—— 后者会把带正文的引文行
+    一并豁免掉，导致覆盖率分母为空（实测 q026 踩到过）。
+    """
+
+    text = sentence or ""
+    if not _ATTRIBUTION_SHAPE_RE.search(text):
+        return False  # 根本没有出处描述，谈不上「纯归属行」
+    text = _CITATION_GROUP_RE.sub(" ", text)
+    text = re.sub(r"《[^》]*》", " ", text)
+    text = _ATTR_VERSION_RE.sub(" ", text)
+    text = _ATTR_WORD_RE.sub(" ", text)
+    text = _ATTR_LEFTOVER_RE.sub("", text)
+    return len(text) < _BARE_ATTRIBUTION_MAX
+
+
 def is_claim_sentence(sentence: str) -> bool:
     """判断一句话是否属于「需要引用的结论句」。
 
-    豁免：过短句、纯标题、以及明确的未覆盖说明（拒答话术本身不需要引用）。
+    豁免：过短句、纯标题、纯归属行、以及明确的未覆盖说明（拒答话术本身不需要引用）。
     """
 
     stripped = (sentence or "").strip()
     if len(stripped) < 8:
+        return False
+    if _is_bare_attribution(stripped):
         return False
     if any(p.search(stripped) for p in _NO_CITE_PATTERNS):
         return False
@@ -160,7 +206,13 @@ def check_citations(
         ids = parse_citation_ids(sentence)
         if ids:
             used.extend(ids)
-            if is_claim_sentence(sentence):
+            # **挂了引用的句子就算结论句**（唯一例外是「纯归属行」）：
+            # 生成侧给它挂了 `[n]`，等于声明「这句有依据」，那它就必须进覆盖率的分母。
+            # 不能再用 is_claim_sentence 过滤它 —— 否则「引用某条拒答话术」的句子
+            # （例如 `- 《备件库存台账》 第 1 页：明确记载「未找到该备件，需原厂确认」[1]`）
+            # 会被 _DISCLAIMER_RE 当成免责声明豁免掉，分母变成 0，
+            # 覆盖率在评测里按 100% 计（`citation_coverage_vacuous` 就是这种空覆盖计数）。
+            if not _is_bare_attribution(sentence):
                 result.total_claims += 1
                 # 只有**真实存在**的引用才算「这句话有依据」：
                 # 挂了伪造编号的句子等于没有依据，不能计入覆盖率
