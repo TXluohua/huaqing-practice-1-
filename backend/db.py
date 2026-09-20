@@ -25,7 +25,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import DateTime, Float, Integer, String, Text, select, text
+from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text, select, text
 from sqlalchemy.dialects import mysql, sqlite
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -221,6 +221,173 @@ def get_session_factory() -> async_sessionmaker[AsyncSession]:
             bind=get_engine(), expire_on_commit=False, class_=AsyncSession
         )
     return _session_factory
+
+
+# --------------------------------------------------------------------------- #
+# 新增业务表（2026-09-20 追加，只追加不改既有表）
+#
+# 覆盖三块新业务：
+#   ① 维护计划生成   maintenance_plan
+#   ② 备件商城与采购 part_order / part_settlement
+#   ③ 考核认证       training_quiz / training_attempt / certification
+#
+# 零幻觉约束同样适用：计划项与考题都必须带 evidence（引用手册章节/切片），
+# 没有依据的条目不允许入库。
+# --------------------------------------------------------------------------- #
+
+
+class MaintenancePlan(Base):
+    """维护计划项（①维护计划生成）。
+
+    `cycle_basis` 决定用哪种口径推算到期：运行小时 / 生产片数 / 自然日 / 每次开腔。
+    计划依据（`evidence`）保存引用的手册章节，前端可直接展示「这条计划出自哪一页」。
+    """
+
+    __tablename__ = "maintenance_plan"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    device_model: Mapped[str] = mapped_column(String(64), index=True)
+    device_code: Mapped[str] = mapped_column(String(64), default="", index=True)
+    item_name: Mapped[str] = mapped_column(String(255))
+    #: PM 项 / 耗材更换 / 校准 / 安全检查 / 清洗
+    item_type: Mapped[str] = mapped_column(String(32), default="PM 项")
+    #: hours（运行小时）/ wafers（生产片数）/ days（自然日）/ open（每次开腔）
+    cycle_basis: Mapped[str] = mapped_column(String(16), default="hours")
+    cycle_value: Mapped[float] = mapped_column(Float, default=0.0)
+    #: 上次维护时的计量基线（运行小时或片数；自然日口径用完成时间）
+    baseline_value: Mapped[float] = mapped_column(Float, default=0.0)
+    #: 当前计量值（生成时由调用方传入；「按天」口径可为 0）
+    current_value: Mapped[float] = mapped_column(Float, default=0.0)
+    #: 距离到期还差多少计量单位（负数表示已超期）
+    remaining: Mapped[float] = mapped_column(Float, default=0.0)
+    due_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    #: planned / due / done / skipped
+    status: Mapped[str] = mapped_column(String(16), default="planned", index=True)
+    #: 计划依据：Citation 列表（与 state.Citation 字段一致）
+    evidence: Mapped[list[Any]] = mapped_column(JSONColumn, default=list)
+    chunk_id: Mapped[str] = mapped_column(String(64), default="")
+    note: Mapped[str] = mapped_column(LongText, default="")
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=_utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=_utcnow, onupdate=_utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+
+
+class PartOrder(Base):
+    """备件采购申请单（②备件商城与采购）。
+
+    边界（开发文档 §1.3「不自动下单」）：本表只承载**内部采购申请**，
+    必须经人工确认（approved）才进入后续环节，系统不对供应商发起任何真实下单。
+    """
+
+    __tablename__ = "part_order"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    order_no: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    device_model: Mapped[str] = mapped_column(String(64), default="")
+    purpose: Mapped[str] = mapped_column(String(255), default="")
+    applicant: Mapped[str] = mapped_column(String(64), default="")
+    #: draft / submitted / approved / rejected / received / cancelled
+    status: Mapped[str] = mapped_column(String(16), default="draft", index=True)
+    #: 明细：[{code, part, qty, unit, unit_price, amount, is_substitute, basis}]
+    items: Mapped[list[Any]] = mapped_column(JSONColumn, default=list)
+    total_amount: Mapped[float] = mapped_column(Float, default=0.0)
+    currency: Mapped[str] = mapped_column(String(8), default="CNY")
+    note: Mapped[str] = mapped_column(LongText, default="")
+    trace_id: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=_utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=_utcnow, onupdate=_utcnow)
+    submitted_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    closed_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+
+
+class PartSettlement(Base):
+    """采购结算台账（②备件商城与采购）。
+
+    只记账，不做真实财务过账（开发文档 §1.3「不做采购结算」原意是不做财务系统集成，
+    这里按业务需要补一张**台账**，供对账与统计使用）。
+    """
+
+    __tablename__ = "part_settlement"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    order_id: Mapped[int] = mapped_column(Integer, index=True)
+    order_no: Mapped[str] = mapped_column(String(32), index=True)
+    amount: Mapped[float] = mapped_column(Float, default=0.0)
+    currency: Mapped[str] = mapped_column(String(8), default="CNY")
+    #: 对公转账 / 月结 / 现结 / 其他
+    method: Mapped[str] = mapped_column(String(16), default="月结")
+    invoice_no: Mapped[str] = mapped_column(String(64), default="")
+    operator: Mapped[str] = mapped_column(String(64), default="")
+    note: Mapped[str] = mapped_column(LongText, default="")
+    settled_at: Mapped[datetime] = mapped_column(UTCDateTime, default=_utcnow, index=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=_utcnow)
+
+
+class TrainingQuiz(Base):
+    """练习题/考核题（③考核认证）。
+
+    `items[*].evidence` 是硬要求：每道题的答案必须能追溯到知识库切片，
+    这样「题目错了」可以像回答一样被复核（零幻觉贯穿到培训环节）。
+    """
+
+    __tablename__ = "training_quiz"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    device_model: Mapped[str] = mapped_column(String(64), default="")
+    topic: Mapped[str] = mapped_column(String(255), default="")
+    #: basic / advanced
+    level: Mapped[str] = mapped_column(String(16), default="basic")
+    n_items: Mapped[int] = mapped_column(Integer, default=0)
+    #: [{no, question, type, options, answer, explanation, evidence:[Citation]}]
+    items: Mapped[list[Any]] = mapped_column(JSONColumn, default=list)
+    #: llm:<model> 或 extractive-fallback（降级路径）
+    generator: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=_utcnow, index=True)
+
+
+class TrainingAttempt(Base):
+    """一次作答记录与判分结果（③考核认证）。"""
+
+    __tablename__ = "training_attempt"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    quiz_id: Mapped[int] = mapped_column(Integer, index=True)
+    trainee: Mapped[str] = mapped_column(String(64), default="", index=True)
+    answers: Mapped[list[Any]] = mapped_column(JSONColumn, default=list)
+    score: Mapped[float] = mapped_column(Float, default=0.0)
+    passed: Mapped[bool] = mapped_column(Boolean, default=False)
+    #: 逐题批改明细：[{no, correct, expected, got, explanation, evidence}]
+    detail: Mapped[list[Any]] = mapped_column(JSONColumn, default=list)
+    duration_s: Mapped[float] = mapped_column(Float, default=0.0)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=_utcnow, index=True)
+
+
+class Certification(Base):
+    """认证记录（③考核认证）。
+
+    发证规则由 service 层判定（必须通过考核且分数达标），
+    并记录有效期用于「到期提醒」；系统**不代表原厂签发认证**，
+    `issuer` 与 `note` 用于标注内部授权口径。
+    """
+
+    __tablename__ = "certification"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    trainee: Mapped[str] = mapped_column(String(64), index=True)
+    device_model: Mapped[str] = mapped_column(String(64), index=True)
+    #: L1 / L2 / L3（按设备类型分级授权）
+    level: Mapped[str] = mapped_column(String(8), default="L1")
+    attempt_id: Mapped[int] = mapped_column(Integer, default=0)
+    quiz_id: Mapped[int] = mapped_column(Integer, default=0)
+    score: Mapped[float] = mapped_column(Float, default=0.0)
+    issuer: Mapped[str] = mapped_column(String(64), default="内部授权")
+    issued_at: Mapped[datetime] = mapped_column(UTCDateTime, default=_utcnow, index=True)
+    expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True, index=True)
+    #: valid / revoked
+    status: Mapped[str] = mapped_column(String(16), default="valid", index=True)
+    note: Mapped[str] = mapped_column(LongText, default="")
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=_utcnow)
 
 
 async def init_db() -> tuple[bool, str]:

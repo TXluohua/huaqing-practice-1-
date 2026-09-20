@@ -311,6 +311,35 @@ async def create_document(
 # --------------------------------------------------------------------------- #
 
 
+def _invalidate_dependent_caches() -> None:
+    """索引变化后清掉下游的进程内缓存。
+
+    重建会 `store.reset()` 并重新入库，而下面这些缓存是**进程级**的，不清就会
+    在新语料上继续用旧内容：
+
+        * `tools.kb_tools`：检索引擎对象与知识库全文缓存（`kb_corpus_text` 供
+          引用锚点校验使用 —— 不清会让**新入库文档里的术语被判成「知识库没有」**，
+          从而误拒本该回答的问题）；
+        * `services.plan_service`：维护计划的证据池（TTL 120s）。
+
+    任一模块导入/清理失败都只记日志，**不影响重建结果**（缓存下次访问会自行重建）。
+    """
+
+    try:
+        from ..tools.kb_tools import reset_retriever
+
+        reset_retriever()
+    except Exception as exc:  # noqa: BLE001 - 缓存清理失败不能影响重建
+        logger.warning("重建后清理检索缓存失败：%s", exc)
+
+    try:
+        from .plan_service import reset_plan_cache
+
+        reset_plan_cache()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("重建后清理维护计划证据池失败：%s", exc)
+
+
 async def _run_rebuild(job: Job, *, scope: str, force: bool) -> None:
     """后台重建索引：清空（可选）-> 遍历 data/raw -> 全量入库。"""
 
@@ -353,6 +382,9 @@ async def _run_rebuild(job: Job, *, scope: str, force: bool) -> None:
     except Exception as exc:  # noqa: BLE001
         job.status, job.message = "failed", mask_secrets(str(exc))[:300]
         logger.warning("索引重建失败：%s", exc)
+    finally:
+        # 无论成功还是失败（失败时 store 可能已被清空），都要让下游缓存放掉旧内容
+        _invalidate_dependent_caches()
 
 
 async def rebuild_index(*, scope: str, force: bool, trace_id: str) -> str:

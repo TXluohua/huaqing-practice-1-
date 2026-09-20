@@ -13,31 +13,16 @@ import { postSse, type ParsedSseEvent, type SseController } from '@/utils/sse'
 // 通用类型（接口文档 §3）
 // --------------------------------------------------------------------------- //
 
-/** 引用来源类型（接口文档 §3.1） */
-export type SourceType = 'kb_doc' | 'ticket' | 'image'
+/** 引用来源类型 / 引用项：**共享契约类型**，见 `@/api/contracts`（本模块 re-export 保持兼容） */
+import type { Citation } from '@/api/contracts'
+
+export type { Citation, SourceType } from '@/api/contracts'
 
 /** 回答状态（接口文档 §3.3）：NOT_COVERED 为拒答，fail-closed */
 export type Status = 'OK' | 'NOT_COVERED' | 'ERROR'
 
 /** 置信度三级（接口文档 §3.2：>=0.80 high / 0.60-0.80 medium / <0.60 low） */
 export type ConfidenceLabel = 'high' | 'medium' | 'low'
-
-/** 引用项。字段与 backend/agents/state.py 的 Citation 完全一致。 */
-export interface Citation {
-  /** 引用编号 [n]，由后端代码分配，禁止模型编造 */
-  id: number
-  source_type: SourceType
-  doc: string | null
-  /** 文档版本 —— P5「版本混乱」痛点的关键字段，展示时不要省略 */
-  version: string | null
-  section: string | null
-  page: number | null
-  /** 切片 ID，用于「查看原文」 */
-  chunk_id: string | null
-  /** 图片类依据的原图地址（/static/uploads/...，dev 由 Vite 代理） */
-  image_url: string | null
-  snippet: string | null
-}
 
 /** 问题最大长度（后端 backend/setting.py: question_max_len） */
 export const QUESTION_MAX_LEN = 2000

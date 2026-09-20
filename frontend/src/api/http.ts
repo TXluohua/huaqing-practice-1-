@@ -150,8 +150,27 @@ const ERROR_MESSAGES: Record<string, string> = {
   RATE_LIMITED: '请求过于频繁（并发上限 20），请稍后重试。',
   VECTOR_STORE_UNAVAILABLE: '向量库不可用，检索链路已中断。',
   LLM_UNAVAILABLE: '文本模型不可用，暂时无法生成回答。',
-  SERVICE_NOT_READY: '该功能依赖的后端服务尚未实现（backend/services/ 仍为空）。',
+  SERVICE_NOT_READY: '该功能暂不可用：后端服务未就绪，请稍后重试。',
+  DB_UNAVAILABLE: '数据库不可用，该功能暂时无法使用。',
+  KB_UNAVAILABLE: '知识库暂不可用，请稍后重试。',
   INTERNAL_ERROR: '服务内部错误，请查看后端日志。',
+
+  // ---- 业务功能（接口文档 §10）：维护计划 / 备件商城与采购 / 考核认证 ----
+  // 后端 message 已经是中文人话，这里只作兜底（humanizeError 优先用后端 message）
+  PLAN_NOT_FOUND: '维护计划项不存在，请刷新列表。',
+  PART_NOT_FOUND: '备件不存在：编码或名称有误。',
+  SUBSTITUTE_BASIS_REQUIRED: '替代件缺少兼容性依据，需原厂确认后才能采购。',
+  ORDER_NOT_FOUND: '采购申请单不存在，请刷新列表。',
+  ITEM_NOT_FOUND: '购物车里没有该备件，请刷新后重试。',
+  EMPTY_ORDER: '购物车为空，请先加入备件再提交。',
+  REASON_REQUIRED: '驳回或撤销必须填写原因。',
+  INVALID_STATE: '订单状态已变更，请刷新后重试。',
+  ALREADY_SETTLED: '该订单已登记结算，请勿重复提交。',
+  QUIZ_GENERATION_FAILED: '该主题抽不到有依据的题目，请换个主题或设备。',
+  QUIZ_EMPTY: '这份试卷没有题目，请重新出题。',
+  QUIZ_NOT_FOUND: '试卷不存在，请重新出题。',
+  ATTEMPT_NOT_PASSED: '认证必须基于一次通过的考核。',
+  ATTEMPT_NOT_FOUND: '考核记录不存在，请重新考试。',
 }
 
 /** 把 ApiError 转成可直接展示给用户的一句话。 */
