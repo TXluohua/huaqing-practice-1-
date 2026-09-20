@@ -536,7 +536,12 @@ class QuizResponse(BaseModel):
     device_model: str = ""
     topic: str = ""
     level: str = "basic"
+    #: **实际**题量（依据校验剔除不合规题目后可能少于请求量）
     n_items: int = 0
+    #: 出题时请求的题量；`GET /training/quizzes/{id}` 回看试卷时为 null（未落库）
+    requested_items: int | None = None
+    #: 因依据校验被剔除的题量，= requested_items - n_items；回看试卷时为 null
+    dropped_items: int | None = None
     items: list[QuizItem] = Field(default_factory=list)
     generator: str = ""
     created_at: str | None = None

@@ -8,6 +8,8 @@
     ⑤ 通过的 attempt 发证成功且 `expires_at == issued_at + valid_days`
     ⑥ `list_expiring` 能捞出即将到期 / 已过期（吊销的不提醒）
     ⑦ 找不到 quiz 返回 None（另含 422 不出无依据之题、LLM 路径丢弃非法题）
+    ⑧ 数值溯源两级口径：干扰项可跨片段取真实值，自造数值仍被拦；
+       正确答案（含简答要点）必须落在所引片段；缩水时如实回传 requested/dropped
 
 不依赖 DEEPSEEK_API_KEY：`tests/conftest.py` 的 autouse 夹具默认清空云端密钥，
 本文件又在用例内显式 monkeypatch `llm_client.available -> False` / 假 `chat_json`，
@@ -364,6 +366,168 @@ def test_llm_path_drops_items_with_invalid_evidence_index(
     # 提示词里必须给出片段编号与 evidence_index 要求（否则模型无从给出合法序号）
     prompt = captured["messages"][-1]["content"]
     assert "[1]" in prompt and "evidence_index" in prompt
+
+
+# --------------------------------------------------------------------------- #
+# 数值溯源的两级口径：题干/正确答案须落在所引片段，干扰项允许跨段取真实值
+# --------------------------------------------------------------------------- #
+
+
+def _block(index: int, text: str) -> Any:
+    """造一个可直接喂给校验器的片段（metadata 只需满足 _evidence_for 读取）。"""
+
+    from backend.agents.state import Evidence
+
+    return Evidence(
+        chunk_id=f"c_test_{index}",
+        text=text,
+        score=1.0,
+        metadata={
+            "doc_title": f"测试手册-{index}",
+            "version": "V1.0",
+            "page": index,
+            "section": f"{index}.1",
+        },
+    )
+
+
+def test_distractor_may_come_from_another_block() -> None:
+    """干扰项取自**另一段**的真实数值 → 必须保留（回归：曾因误杀导致出题缩水）。
+
+    真实场景：极限压力 3.0×10⁻² 在 §1.1、5.0×10⁻² 在 §3.5，任何单段都不同时含两者，
+    旧口径下「谁引谁死」，题目被成批丢弃。
+    """
+
+    from backend.services import training_service as ts
+
+    blocks = [
+        _block(1, "主抽干式真空泵 DP-600 的极限压力为 3.0×10⁻² Pa，抽速 600 m³/h。"),
+        _block(2, "极限压力高于 5.0×10⁻² Pa 时须返修，额定转速 42000 r/min。"),
+    ]
+    # 正确答案 3.0×10⁻² 落在所引的片段 1；干扰项 5.0×10⁻²、42000 来自片段 2
+    candidate = {
+        "question": "DP-600 的极限压力是多少？",
+        "type": "single",
+        "options": ["3.0×10⁻² Pa", "5.0×10⁻² Pa", "42000 r/min", "600 m³/h"],
+        "answer": 0,
+        "explanation": "片段 1 原文",
+        "evidence_index": 1,
+    }
+    item, reason = ts._validate_llm_item(candidate, blocks, ["single"])
+    assert item is not None, f"跨段干扰项被误杀：{reason}"
+    assert item["answer"] == 0
+
+
+def test_distractor_still_rejects_fabricated_number() -> None:
+    """干扰项里的自造数值（全语料都没有）→ 仍然丢弃（防编造红线不放宽）。"""
+
+    from backend.services import training_service as ts
+
+    blocks = [
+        _block(1, "主抽干式真空泵 DP-600 的极限压力为 3.0×10⁻² Pa，抽速 600 m³/h。"),
+    ]
+    candidate = {
+        "question": "DP-600 的极限压力是多少？",
+        "type": "single",
+        "options": ["3.0×10⁻² Pa", "7777 Pa"],
+        "answer": 0,
+        "explanation": "x",
+        "evidence_index": 1,
+    }
+    item, reason = ts._validate_llm_item(candidate, blocks, ["single"])
+    assert item is None
+    assert "干扰项" in reason and "7777" in reason
+
+
+def test_correct_answer_must_be_traceable_to_cited_block() -> None:
+    """正确答案的数值不在**本题所引那一段**里 → 丢弃（防「引用撑不起答案」）。"""
+
+    from backend.services import training_service as ts
+
+    blocks = [
+        _block(1, "主抽干式真空泵 DP-600 的抽速为 600 m³/h。"),
+        _block(2, "极限压力高于 5.0×10⁻² Pa 时须返修。"),
+    ]
+    # 正确答案用了片段 2 的 5.0×10⁻²，却声称依据是片段 1
+    candidate = {
+        "question": "须返修的极限压力阈值是多少？",
+        "type": "single",
+        "options": ["5.0×10⁻² Pa", "3.0×10⁻² Pa"],
+        "answer": 0,
+        "explanation": "x",
+        "evidence_index": 1,
+    }
+    item, reason = ts._validate_llm_item(candidate, blocks, ["single"])
+    assert item is None
+    assert "正确答案" in reason
+
+
+def test_short_answer_points_traced_to_cited_block() -> None:
+    """简答题的要点属于「正确答案」，跨段取值同样要被拦下。"""
+
+    from backend.services import training_service as ts
+
+    blocks = [
+        _block(1, "主抽干式真空泵 DP-600 的抽速为 600 m³/h。"),
+        _block(2, "极限压力高于 5.0×10⁻² Pa 时须返修。"),
+    ]
+    candidate = {
+        "question": "干泵返修的判据是什么？",
+        "type": "short",
+        "options": [],
+        "answer": ["5.0×10⁻² Pa"],
+        "explanation": "x",
+        "evidence_index": 1,
+    }
+    item, reason = ts._validate_llm_item(candidate, blocks, ["short"])
+    assert item is None
+    assert "正确答案" in reason
+
+
+def test_generate_quiz_reports_requested_and_dropped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """出题缩水必须如实回传 requested_items / dropped_items，不静默。"""
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "deepseek_api_key", "sk-test-not-used")
+
+    async def fake_chat_json(messages: list[dict[str, str]], **kwargs: Any) -> list[dict[str, Any]]:
+        return [
+            {  # 合规
+                "question": "日常点检由设备操作员在首片生产前完成，说法是否正确？",
+                "type": "judgement",
+                "options": [],
+                "answer": True,
+                "explanation": "片段 1 原文如此",
+                "evidence_index": 1,
+            },
+            {  # 缺 evidence_index → 丢弃
+                "question": "本手册适用于哪种设备？",
+                "type": "judgement",
+                "options": [],
+                "answer": True,
+                "explanation": "x",
+            },
+        ]
+
+    monkeypatch.setattr(training_service.llm_client, "chat_json", fake_chat_json)
+
+    payload = QuizGenerateRequest(
+        device_model="Etcher-A", topic="日常点检", n_items=2,
+        question_types=["single", "judgement"],
+    )
+    result = _run_db(training_service.generate_quiz(payload, trace_id="test-shortfall"))
+
+    assert result["requested_items"] == 2
+    assert result["n_items"] == 1
+    assert result["dropped_items"] == 1
+
+    # 回看试卷时这两个值不可知，必须给 None（不能编一个 0）
+    fetched = _run_db(training_service.get_quiz(result["id"], trace_id="test-shortfall"))
+    assert fetched is not None
+    assert fetched["requested_items"] is None
+    assert fetched["dropped_items"] is None
 
 
 # --------------------------------------------------------------------------- #

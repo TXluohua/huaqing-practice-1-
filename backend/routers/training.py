@@ -56,6 +56,9 @@ async def generate_quiz(
     检索不到依据或片段里没有可用句子时返回 422 QUIZ_GENERATION_FAILED，
     而不是生成没有依据的题（零幻觉）。
     `generator` 字段标明生成方式：`llm:<model>` 或 `extractive-fallback`（确定性抽句降级）。
+
+    **出题量可能少于 `n_items`**：不合规的题会被剔除且不补题重试，实际题量看 `n_items`，
+    缩水情况看 `requested_items` / `dropped_items`（前端应据此提示，不要静默展示）。
     """
 
     result = await service.generate_quiz(payload, trace_id=trace_id)

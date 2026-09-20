@@ -212,7 +212,19 @@ async function onGenerate(): Promise<void> {
     issuedCert.value = null
     trainee.value = trainee.value.trim()
     startTimer()
-    ElMessage.success(`已生成 ${data.items.length} 道题（试卷 #${data.id}）`)
+    // 依据校验会剔除不合规题目（零幻觉），缩水必须显性提示：
+    // 只报实际题量的话，演示/验收方看不出是「本来就这么少」还是「被剔掉了」。
+    const asked = data.requested_items ?? data.items.length
+    const dropped = data.dropped_items ?? 0
+    if (dropped > 0) {
+      ElMessage.warning({
+        message: `已生成 ${data.items.length} 道题（试卷 #${data.id}）：要求 ${asked} 题，${dropped} 题因依据不足已剔除`,
+        duration: 6000,
+        showClose: true,
+      })
+    } else {
+      ElMessage.success(`已生成 ${data.items.length} 道题（试卷 #${data.id}）`)
+    }
   } catch (error) {
     quiz.value = null
     drafts.value = {}
