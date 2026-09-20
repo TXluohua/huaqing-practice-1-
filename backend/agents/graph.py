@@ -23,7 +23,8 @@
                                                           v
                                                        augment ----^
 
-    「证据是否足够?」需要 add_conditional_edges，见 build_graph() 中标 TODO 的位置。
+    「证据是否足够?」由 build_graph() 中的 add_conditional_edges 实现，判定函数是
+    nodes/retrieval.should_augment()（2026-09 已接入，`augment` 未注册时自动退回线性拓扑）。
 
 接入节点后的唯一改动点：build_graph()。
 节点实现写在 nodes/ 下，用 register_node() 注册即可被自动串进链路。
