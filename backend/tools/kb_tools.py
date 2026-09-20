@@ -529,9 +529,13 @@ async def parts_query(part: str, device_model: str | None = None) -> dict[str, A
         part         备件名称或料号（如「腔体门 O-ring」或 SP-ETA-0101）
         device_model 设备型号（可选，用于核对适用范围）
     返回：
-        {"found", "part", "code", "stock", "stock_status", "unit", "location",
-         "lead_time_days", "substitutes": [...], "forbidden": [...],
-         "draft_inquiry", "notes": [...], "source", "updated_at"}
+        {"found", "part", "code", "spec", "stock", "stock_status", "unit", "location",
+         "lead_time_days", "price_cny", "supplier",
+         "substitutes": [{part, code, stock, unit, lead_time_days, price_cny, supplier, basis}],
+         "forbidden": [...], "draft_inquiry", "notes": [...], "source", "updated_at"}
+
+    说明：`price_cny` / `supplier` **只做台账原样透传**，台账没写就是 `None`
+    （调用方按「未提供」处理，不估算价格）。
 
     边界（开发文档 4.2 / FR-10）：**不自动下单**；替代件必须附兼容性依据，
     无依据时明确输出「需原厂确认」，**不做「应该能替代」的推断** —— 备件用错会损坏设备。
@@ -581,6 +585,9 @@ async def parts_query(part: str, device_model: str | None = None) -> dict[str, A
                 "stock": sub.get("stock"),
                 "unit": sub.get("unit") or unit,
                 "lead_time_days": sub.get("lead_time_days"),
+                # 价格 / 供应商原样透传台账值；台账没写就是 None，**不估算、不编造**
+                "price_cny": sub.get("price_cny"),
+                "supplier": sub.get("supplier"),
                 "basis": basis,
                 "requires_approval": bool(sub.get("requires_approval")),
             }
@@ -605,6 +612,10 @@ async def parts_query(part: str, device_model: str | None = None) -> dict[str, A
         "unit": unit,
         "location": matched.get("location"),
         "lead_time_days": matched.get("lead_time_days"),
+        # 价格与供应商：台账（config/parts_inventory.yaml）里没有就返回 None，
+        # 调用方必须按「未提供」处理 —— 本项目不允许推测价格。
+        "price_cny": matched.get("price_cny"),
+        "supplier": matched.get("supplier"),
         "substitutes": substitutes,
         "forbidden": matched.get("forbidden") or [],
         "draft_inquiry": _draft_inquiry(matched, substitutes, device_model),

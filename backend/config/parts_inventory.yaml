@@ -15,6 +15,8 @@ source_note: 示例数据，非真实库存
 items:
   - part: 腔体门 O-ring
     code: SP-ETA-0101
+    price_cny: 185.0
+    supplier: 示例供应商-密封件
     device_model: Etcher-A
     spec: FKM，硬度 70 Shore A，内径 320 mm × 线径 5.33 mm
     stock: 12
@@ -24,6 +26,8 @@ items:
     substitutes:
       - part: 腔体门 O-ring（FFKM 全氟醚）
         code: SP-ETA-0101F
+        price_cny: 560.0
+        supplier: 示例供应商-密封件
         stock: 4
         unit: 个
         lead_time_days: 7
@@ -35,6 +39,8 @@ items:
 
   - part: 气体管路 O-ring
     code: SP-ETA-0102
+    price_cny: 210.0
+    supplier: 示例供应商-密封件
     device_model: Etcher-A
     spec: FKM 氟橡胶，硬度 75 Shore A，内径 12 mm × 线径 2.62 mm
     stock: 40
@@ -48,6 +54,8 @@ items:
 
   - part: 干泵排气过滤器
     code: SP-ETA-0210
+    price_cny: 320.0
+    supplier: 示例供应商-过滤件
     device_model: Etcher-A
     spec: 型号 FL-600，适配 DP-600 干泵
     stock: 3
@@ -58,6 +66,8 @@ items:
 
   - part: 真空泵油
     code: SP-ETA-0220
+    price_cny: 1450.0
+    supplier: 示例供应商-泵件
     device_model: Etcher-A
     spec: VG100 合成真空泵油，1 L/瓶，单次换油量 1.2 L
     stock: 18
@@ -68,6 +78,8 @@ items:
 
   - part: 罗茨泵 RP-300 密封组件
     code: SP-ETA-0310
+    price_cny: 680.0
+    supplier: 示例供应商-传感器
     device_model: Etcher-A
     spec: 适配 RP-300 罗茨泵
     stock: 0

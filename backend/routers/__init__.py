@@ -219,6 +219,54 @@ def get_kb_service() -> Any:
     return _load_service("kb_service", "知识库服务", _KB_SERVICE_API)
 
 
+# ---- 新业务 service 契约（2026-09-20 追加）----
+#: 维护计划生成（backend/services/plan_service.py）
+_PLAN_SERVICE_API = ("generate_plans", "list_plans", "complete_plan", "skip_plan")
+
+#: 备件商城与采购（backend/services/parts_service.py）
+_PARTS_SERVICE_API = (
+    "list_catalog",
+    "get_part",
+    "create_order",
+    "list_orders",
+    "get_order",
+    "submit_order",
+    "approve_order",
+    "reject_order",
+    "receive_order",
+    "settle_order",
+    "list_settlements",
+)
+
+#: 考核认证（backend/services/training_service.py）
+_TRAINING_SERVICE_API = (
+    "generate_quiz",
+    "get_quiz",
+    "submit_attempt",
+    "issue_certification",
+    "list_certifications",
+    "list_expiring",
+)
+
+
+def get_plan_service() -> Any:
+    """维护计划服务（backend/services/plan_service.py）。"""
+
+    return _load_service("plan_service", "维护计划服务", _PLAN_SERVICE_API)
+
+
+def get_parts_service() -> Any:
+    """备件商城与采购服务（backend/services/parts_service.py）。"""
+
+    return _load_service("parts_service", "备件商城与采购服务", _PARTS_SERVICE_API)
+
+
+def get_training_service() -> Any:
+    """考核认证服务（backend/services/training_service.py）。"""
+
+    return _load_service("training_service", "考核认证服务", _TRAINING_SERVICE_API)
+
+
 # --------------------------------------------------------------------------- #
 # 路由聚合
 # --------------------------------------------------------------------------- #
@@ -227,12 +275,20 @@ api_router = APIRouter()
 
 
 def register_routers() -> APIRouter:
-    """挂载 chat / admin 两个子路由。"""
+    """挂载 chat / admin / plans / parts / training 五组子路由。
 
-    from . import admin, chat
+    注册顺序即路由匹配顺序：`/parts/{code}` 这类**带路径参数**的路由必须排在
+    `/parts/catalog`、`/parts/orders` 等固定路径之后，`parts.router` 内部已按此顺序声明，
+    因此这里整体放在固定路径路由之后挂载即可。
+    """
+
+    from . import admin, chat, parts, plans, training
 
     api_router.include_router(chat.router)
     api_router.include_router(admin.router)
+    api_router.include_router(plans.router)
+    api_router.include_router(parts.router)
+    api_router.include_router(training.router)
     return api_router
 
 
@@ -243,6 +299,9 @@ __all__ = [
     "api_router",
     "get_chat_service",
     "get_kb_service",
+    "get_parts_service",
+    "get_plan_service",
     "get_trace_id",
+    "get_training_service",
     "register_error_handlers",
 ]
