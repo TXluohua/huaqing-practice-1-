@@ -218,6 +218,22 @@ def test_enforce_citations_attributes_and_drops() -> None:
     assert check_citations(fixed, BLOCKS).coverage == 1.0
 
 
+def test_enforce_citations_does_not_repair_fake_ids() -> None:
+    """伪造/越界编号**不得**被静默修复：要留在答案里被 verify 抓出来拒答。
+
+    这是刻意的取舍 —— enforcement 只负责「补上缺失的引用」与「丢弃无依据的句子」；
+    一旦连伪造编号也顺手改掉，模型的引用造假行为就被洗白了（开发文档 §8.2 要求可识别）。
+    """
+
+    answer = "- 腔体真空度异常先检查腔体门 O-ring [9]。"
+    fixed, stats = enforce_citations(answer, BLOCKS, threshold=0.45)
+    assert "[9]" in fixed, fixed                      # 原样保留
+    assert stats["attributed"] == 0
+    check = check_citations(fixed, BLOCKS)
+    assert check.fake_ids == [9]                      # 仍能被识别
+    assert check.coverage < 1.0
+
+
 def test_enforce_citations_keeps_non_claim_lines() -> None:
     """标题、依据清单等非结论行原样保留（不能被当成无依据结论删掉）。"""
 

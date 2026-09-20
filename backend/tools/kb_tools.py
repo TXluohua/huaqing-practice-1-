@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Sequence
@@ -253,8 +254,17 @@ def expand_queries(question: str) -> list[str]:
     hit_terms: list[str] = []
     for canonical, synonyms in glossary.get("terms", {}).items():
         for synonym in synonyms:
-            if synonym and synonym.lower() in question.lower():
-                normalized = normalized.replace(synonym, canonical)
+            if not synonym or synonym.lower() not in question.lower():
+                continue
+            # 边界感知替换：型号/报警码里的词不能动。
+            # 实测踩到过 CVD-200 被替换成「薄膜沉积-200」，于是 200 变成孤立的数值锚点，
+            # 把一个可答问题判成「材料里找不到该数值」；顺带也让改写后的检索式更干净。
+            pattern = re.compile(
+                r"(?<![A-Za-z0-9\-])" + re.escape(synonym) + r"(?![A-Za-z0-9\-]*\d)"
+            )
+            replaced, count = pattern.subn(canonical, normalized)
+            if count:
+                normalized = replaced
                 hit_terms.append(canonical)
                 break
     if normalized.strip() and normalized.strip() != question.strip():

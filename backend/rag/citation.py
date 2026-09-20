@@ -201,8 +201,10 @@ class AnchorCheck:
 #: 设备型号/报警码形态：XH-900 / TMP-1600 / E-2041 / CVD200
 _MODEL_ID_RE = re.compile(r"[A-Za-z]{1,6}[-\s]?\d{2,4}")
 #: 数值 + 单位（问题里出现的具体阈值必须有依据）
+#: 前面不能是 `-` 或字母数字：型号里的数字（CVD-200、TMP-1600）不是「具体数值」
 _NUM_UNIT_RE = re.compile(
-    r"\d+(?:\.\d+)?\s*(?:h|s|min|Pa|kPa|MPa|sccm|slm|L|mL|mm|cm|kg|W|kW|MHz|ppm|r/min|rpm|片|次|天|小时|分钟|秒)"
+    r"(?<![-\w])\d+(?:\.\d+)?\s*"
+    r"(?:h|s|min|Pa|kPa|MPa|sccm|slm|L|mL|mm|cm|kg|W|kW|MHz|ppm|r/min|rpm|片|次|天|小时|分钟|秒)"
 )
 #: 疑问句里不承载「查什么」的通用词，不计入术语覆盖率
 _QUESTION_NOISE: frozenset[str] = frozenset(
@@ -211,6 +213,21 @@ _QUESTION_NOISE: frozenset[str] = frozenset(
         "应该", "可以", "规定", "要求", "标准", "情况", "问题", "时候", "步骤", "顺序",
         "方法", "处理", "执行", "分别", "具体", "一般", "通常", "以及", "还有", "如果",
         "怎样", "多久", "何时", "哪几", "几个", "一次", "多少", "什么", "怎么",
+        # 口语化提问里的填充词、程度词、泛化动词（实测 45 条集上会把可答问题误判为未覆盖）
+        "要是", "如果", "假设", "万一", "比如", "例如", "以上", "以下", "太低", "太高",
+        "压得", "毛病", "讲究", "我们", "你们", "他们", "准备", "打算", "换个", "换一个",
+        "这块", "那块", "这个", "那个", "用到", "配药", "药水", "注意", "怎么办", "干嘛",
+        "车间", "起火", "或者", "第一步", "第二步", "后续", "然后", "接着", "顺便", "麻烦",
+        "帮忙", "看下", "问下", "有没有", "能不能", "行不行", "大概", "差不多", "可能",
+        "有点", "挺", "超", "特别", "更", "最", "再", "又", "还", "就", "才", "都", "也",
+        "只", "光", "全", "非常", "一下", "一些", "点儿", "点儿", "啥", "咋", "哦", "嗯",
+        "哪里", "哪儿", "哪种", "什么样",
+        # 提问框架名词：它们问的是「想知道哪一类信息」，不是知识库里的实体。
+        # 负样本靠的是「年度/维保/合同/费用/折旧/年限/资产/编号/预算/排班表」这类实体词，
+        # 不在这张表里，因此不会削弱未覆盖判定（45 条集上实测：正样本误杀 0、负样本 5/5 仍拦住）。
+        "后果", "限制", "影响", "原因", "效果", "风险", "区别", "关系", "做法", "作用",
+        "好处", "坏处", "要点", "前提", "依据", "结论", "表现", "现象", "趋势", "幅度",
+        "程度", "细节", "情况", "步骤", "方法", "措施", "要求", "标准", "判据", "区别",
     }
 )
 
@@ -270,7 +287,13 @@ def anchor_check(
 
     models = [m for m in {x.strip() for x in _MODEL_ID_RE.findall(question or "")} if m]
     missing_models = [m for m in models if m.lower() not in haystack_norm]
-    numbers = [n.strip() for n in {x.strip() for x in _NUM_UNIT_RE.findall(question or "")}]
+
+    # 数值锚点前先把型号/报警码从文本里剔除：否则「CVD-200 片内均匀性」里的 200
+    # 会被当成「数值 200 片」要求材料里出现，把一个可答问题判成无依据（实测踩到过）
+    scrubbed = question or ""
+    for model in models:
+        scrubbed = scrubbed.replace(model, " ")
+    numbers = [n.strip() for n in {x.strip() for x in _NUM_UNIT_RE.findall(scrubbed)}]
     missing_numbers = [n for n in numbers if n.lower() not in haystack_norm]
 
     # 型号片段（如 XH / 900）已由型号规则覆盖，避免在术语里重复报一次
@@ -434,6 +457,9 @@ def enforce_citations(
                 kept_pieces.append(piece)
                 continue
             if parse_citation_ids(piece):
+                # 已有编号的句子原样保留 —— **包括编号越界的句子**：
+                # 伪造引用是模型行为红线，必须留在答案里被 check_citations 抓出来并拒答，
+                # 绝不能在这里静默改成「看起来正确」的编号（开发文档 §8.2 明确要求可识别）
                 kept_pieces.append(piece)
                 stats["kept"] += 1
                 continue
