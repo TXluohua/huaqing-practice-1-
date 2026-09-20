@@ -86,6 +86,41 @@ def test_reference_list_lines_are_not_claims() -> None:
     assert result.coverage == 1.0
 
 
+def test_cited_quotation_lines_count_as_claims() -> None:
+    """**带引用的引文行必须计入覆盖率分母**（否则覆盖率会变成「空覆盖」）。
+
+    实测回归（2026-09-20，q026「电容薄膜规与 MFC 的备件规格」）：整段答案都是
+    `- 《备件库存台账》 示例数据 第 1 页：明确记载「…」[1]` 这种**带正文的引文行**，
+    旧口径把它当「纯引用行」豁免掉，结论句数为 0 → 覆盖率分母为空，
+    评测里按 100% 计（report 的 `citation_coverage_vacuous` 暴露了这一点），
+    不可降级的 G2 指标在这条上形同虚设。
+    """
+
+    answer = (
+        "- 《备件库存台账》 示例数据 第 1 页：明确记载「备件目录中未找到该备件，"
+        "不做无依据的替代推断，需原厂确认」[1]。\n"
+        "- 《备件目录与替代件说明》 V1.4 第 4 页 章节 2.2：给出电容薄膜规的编码与量程 [2]。"
+    )
+    result = check_citations(answer, BLOCKS)
+    assert result.total_claims == 2, "带正文的引文行必须计入结论句"
+    assert result.cited_claims == 2
+    assert result.coverage == 1.0
+
+
+def test_bare_attribution_lines_are_still_exempt() -> None:
+    """真正的纯引用行（只有文档名/版本/页/章节，没有正文）仍然不计入结论句。"""
+
+    answer = (
+        "腔体真空度异常先检查 O-ring [1]。\n\n"
+        "依据：\n"
+        "- [1] 《刻蚀设备维护手册》 V3.2 第 3 页 章节 3.4\n"
+        "- 《刻蚀设备维护手册》 V3.2 第 3 页 章节 3.4\n"
+    )
+    result = check_citations(answer, BLOCKS)
+    assert result.total_claims == 1, "纯归属行不应计入结论句"
+    assert result.coverage == 1.0
+
+
 def test_disclaimer_sentences_are_exempt() -> None:
     answer = "知识库未覆盖该问题，不给出具体操作步骤。建议补充型号描述。"
     assert check_citations(answer, BLOCKS).total_claims == 0

@@ -459,13 +459,18 @@ const certQuery = reactive({ trainee: '' })
 const certs = ref<Certification[]>([])
 const certTotal = ref(0)
 const certLoading = ref(false)
+/** 认证记录分页（后端支持 limit/offset；之前一次拉 50 条，证书多了就看不全） */
+const CERT_PAGE_SIZE = 10
+const certOffset = ref(0)
+const certPage = computed(() => Math.floor(certOffset.value / CERT_PAGE_SIZE) + 1)
 
 async function loadCertifications(): Promise<void> {
   certLoading.value = true
   try {
     const response = await listCertifications({
       trainee: certQuery.trainee.trim() || undefined,
-      limit: 50,
+      limit: CERT_PAGE_SIZE,
+      offset: certOffset.value,
     })
     certs.value = response.items
     certTotal.value = response.total
@@ -476,6 +481,17 @@ async function loadCertifications(): Promise<void> {
   } finally {
     certLoading.value = false
   }
+}
+
+/** 查询 / 刷新：回到第 1 页（否则换了过滤条件还停在第 3 页会看到空列表） */
+async function searchCertifications(): Promise<void> {
+  certOffset.value = 0
+  await loadCertifications()
+}
+
+async function onCertPageChange(page: number): Promise<void> {
+  certOffset.value = (page - 1) * CERT_PAGE_SIZE
+  await loadCertifications()
 }
 
 // --------------------------------------------------------------------------- //
@@ -890,10 +906,10 @@ onBeforeUnmount(stopTimer)
             class="cert-toolbar__field"
             placeholder="按答题人过滤，留空看全部"
             clearable
-            @keyup.enter="loadCertifications"
-            @clear="loadCertifications"
+            @keyup.enter="searchCertifications"
+            @clear="searchCertifications"
           />
-          <el-button size="small" type="primary" @click="loadCertifications">查询</el-button>
+          <el-button size="small" type="primary" @click="searchCertifications">查询</el-button>
           <span class="cert-toolbar__total tnum">共 {{ certTotal }} 张</span>
         </div>
 
@@ -936,6 +952,18 @@ onBeforeUnmount(stopTimer)
             <el-empty description="暂无认证记录" :image-size="80" />
           </template>
         </el-table>
+
+        <div v-if="certTotal > CERT_PAGE_SIZE" class="cert-pager">
+          <el-pagination
+            layout="prev, pager, next, total"
+            :total="certTotal"
+            :page-size="CERT_PAGE_SIZE"
+            :current-page="certPage"
+            background
+            small
+            @current-change="onCertPageChange"
+          />
+        </div>
       </el-card>
     </div>
 
@@ -1491,6 +1519,12 @@ onBeforeUnmount(stopTimer)
 }
 
 /* ---------------------------------------------------------------- 认证记录 */
+.cert-pager {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--sp-3);
+}
+
 .cert-toolbar {
   display: flex;
   flex-wrap: wrap;

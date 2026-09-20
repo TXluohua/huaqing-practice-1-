@@ -163,18 +163,23 @@ const total = ref(0)
 const offset = ref(0)
 const listLoading = ref(false)
 const statusFilter = ref<PlanStatus | ''>('')
+/** 设备型号筛选（留空 = 所有设备共用一个待办队列） */
+const modelFilter = ref('')
 
 const currentPage = computed(() => Math.floor(offset.value / PAGE_SIZE) + 1)
 
 /**
  * 拉取计划列表。
- * 列表**不按设备型号过滤**：不同设备共用一个待办队列，筛选只按状态（见页面筛选器）。
+ *
+ * 默认**不按设备型号过滤**（留空 = 所有设备共用一个待办队列，现场就是「今天该做哪些维护」）；
+ * 需要只看某台设备时，用上方的设备型号输入框筛（走后端 `device_model` 参数，不在前端过滤）。
  * 失败时清空列表而不是留着上一次的数据 —— 否则用户会把陈旧数据当成刷新结果。
  */
 async function loadPlans(): Promise<void> {
   listLoading.value = true
   try {
     const response = await listPlans({
+      device_model: modelFilter.value.trim() || undefined,
       status: statusFilter.value || undefined,
       limit: PAGE_SIZE,
       offset: offset.value,
@@ -520,6 +525,12 @@ async function submitAction(): Promise<void> {
                 </el-button>
               </template>
             </el-table-column>
+            <!-- 完成/跳过时间由后端返回（completed_at），这里如实展示，不再让用户去 note 里找 -->
+            <el-table-column label="完成 / 跳过时间" width="150">
+              <template #default="{ row }">
+                <span class="tnum">{{ formatTime(row.completed_at) }}</span>
+              </template>
+            </el-table-column>
             <template #empty>
               <el-empty description="本次没有算出计划项" :image-size="70" />
             </template>
@@ -535,10 +546,20 @@ async function submitAction(): Promise<void> {
               <h2 class="panel__title">计划列表</h2>
               <span v-if="total" class="plan__count tnum">{{ total }}</span>
             </div>
-            <p class="panel__desc">按后端返回顺序展示（最紧急在前），本页不做二次排序</p>
+            <p class="panel__desc">按后端返回顺序展示（最紧急在前），本页不做二次排序；筛选走后端参数</p>
           </div>
 
           <div class="plan__filters">
+            <el-input
+              v-model="modelFilter"
+              size="small"
+              class="plan__model-filter"
+              placeholder="设备型号（留空 = 全部设备）"
+              clearable
+              @change="onFilterChange"
+              @clear="onFilterChange"
+              @keyup.enter="onFilterChange"
+            />
             <el-radio-group v-model="statusFilter" size="small" @change="onFilterChange">
               <el-radio-button
                 v-for="option in STATUS_FILTERS"
@@ -872,6 +893,11 @@ async function submitAction(): Promise<void> {
   flex-wrap: wrap;
   gap: var(--sp-2);
   align-items: center;
+}
+
+/* 设备型号筛选：宽度固定，避免和状态分段控件抢空间导致换行跳动 */
+.plan__model-filter {
+  width: 210px;
 }
 
 /* -------------------------------------------------------------- 未覆盖清单 */
