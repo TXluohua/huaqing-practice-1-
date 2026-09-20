@@ -22,10 +22,9 @@ from __future__ import annotations
 import asyncio
 import sys
 import uuid
-from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Awaitable
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
@@ -58,13 +57,25 @@ MISSING_QUIZ_ID = 9_999_999_999
 MISSING_ATTEMPT_ID = 9_999_999_998
 
 
-@pytest.fixture(scope="module", autouse=True)
-def _db_ready() -> Iterator[None]:
-    """库表已建好（真实 SQLite），否则整文件跳过没有意义 —— 直接断言失败。"""
+async def _with_db(scenario: Awaitable[Any]) -> Any:
+    """每个场景自带一次 init_db / dispose_db（连接不跨事件循环复用）。
 
-    ok, detail = asyncio.run(db.init_db())
+    必须与场景**在同一个事件循环内**：`db._engine` 是模块级全局缓存，
+    若在 loop A 里 init、在 loop B 里用，MySQL（aiomysql）会报
+    「Future attached to a different loop」；SQLite 的连接实现恰好容忍这种用法，
+    所以这个错误只在 MySQL 下暴露（与 test_parts_service.py 同一范式）。
+    """
+
+    ok, detail = await db.init_db()
     assert ok, f"数据库不可用：{detail}"
-    yield
+    try:
+        return await scenario
+    finally:
+        await db.dispose_db()
+
+
+def _run_db(scenario: Awaitable[Any]) -> Any:
+    return asyncio.run(_with_db(scenario))
 
 
 # --------------------------------------------------------------------------- #
@@ -167,12 +178,12 @@ def _insert_quiz(items: list[dict[str, Any]], *, topic: str) -> int:
             await session.flush()
             return int(row.id or 0)
 
-    return asyncio.run(_inner())
+    return _run_db(_inner())
 
 
 def _submit(quiz_id: int, trainee: str, answers: list[Any]) -> dict[str, Any]:
     payload = QuizSubmitRequest(trainee=trainee, answers=answers, duration_s=123.0)
-    result = asyncio.run(training_service.submit_attempt(quiz_id, payload, trace_id="test-submit"))
+    result = _run_db(training_service.submit_attempt(quiz_id, payload, trace_id="test-submit"))
     assert result is not None
     return result
 
@@ -208,7 +219,7 @@ def _insert_certification(
             await session.flush()
             return int(row.id or 0)
 
-    return asyncio.run(_inner())
+    return _run_db(_inner())
 
 
 # --------------------------------------------------------------------------- #
@@ -228,7 +239,7 @@ def test_generate_quiz_every_item_has_evidence(monkeypatch: pytest.MonkeyPatch) 
         n_items=4,
         question_types=["single", "judgement", "multiple", "short"],
     )
-    result = asyncio.run(training_service.generate_quiz(payload, trace_id="test-generate"))
+    result = _run_db(training_service.generate_quiz(payload, trace_id="test-generate"))
 
     assert result["id"] > 0
     assert result["generator"] == "extractive-fallback"
@@ -257,7 +268,7 @@ def test_generate_quiz_every_item_has_evidence(monkeypatch: pytest.MonkeyPatch) 
     QuizResponse.model_validate(result)
 
     # 落库可读回
-    fetched = asyncio.run(training_service.get_quiz(result["id"], trace_id="test-generate"))
+    fetched = _run_db(training_service.get_quiz(result["id"], trace_id="test-generate"))
     assert fetched is not None
     assert fetched["id"] == result["id"]
     assert fetched["n_items"] == result["n_items"]
@@ -271,7 +282,7 @@ def test_generate_quiz_without_evidence_raises_422(monkeypatch: pytest.MonkeyPat
 
     payload = QuizGenerateRequest(device_model="不存在的型号-ZZZ", topic="不存在", n_items=2)
     with pytest.raises(ServiceError) as excinfo:
-        asyncio.run(training_service.generate_quiz(payload, trace_id="test-empty"))
+        _run_db(training_service.generate_quiz(payload, trace_id="test-empty"))
 
     assert excinfo.value.status_code == 422
     assert excinfo.value.code == "QUIZ_GENERATION_FAILED"
@@ -282,7 +293,7 @@ def test_generate_quiz_rejects_unknown_question_type() -> None:
 
     payload = QuizGenerateRequest(device_model="Etcher-A", question_types=["essay"])
     with pytest.raises(ServiceError) as excinfo:
-        asyncio.run(training_service.generate_quiz(payload, trace_id="test-bad-type"))
+        _run_db(training_service.generate_quiz(payload, trace_id="test-bad-type"))
     assert excinfo.value.status_code == 400
     assert excinfo.value.code == "INVALID_ARGUMENT"
 
@@ -342,7 +353,7 @@ def test_llm_path_drops_items_with_invalid_evidence_index(
     payload = QuizGenerateRequest(
         device_model="Etcher-A", topic="日常点检", n_items=4, question_types=["single", "judgement"]
     )
-    result = asyncio.run(training_service.generate_quiz(payload, trace_id="test-llm"))
+    result = _run_db(training_service.generate_quiz(payload, trace_id="test-llm"))
 
     assert result["generator"] == f"llm:{settings.deepseek_model}"
     assert result["n_items"] == 1, "只有 1 道题同时满足 evidence_index 与数值可溯源"
@@ -386,7 +397,7 @@ def test_grading_all_correct_and_all_wrong() -> None:
     assert wrong["detail"][3]["expected"] == ["4000 运行小时", "12 个月"]
 
     # 判分没有顺手发证
-    listed = asyncio.run(
+    listed = _run_db(
         training_service.list_certifications(
             trainee=TRAINEE_GRADE,
             device_model=None,
@@ -434,7 +445,7 @@ def test_issue_certification_requires_passed_attempt() -> None:
     assert failed["passed"] is False
 
     with pytest.raises(ServiceError) as excinfo:
-        asyncio.run(
+        _run_db(
             training_service.issue_certification(
                 CertificationRequest(
                     trainee=TRAINEE_CERT,
@@ -452,7 +463,7 @@ def test_issue_certification_requires_passed_attempt() -> None:
 
     # 不存在的考核记录 → 404（不是 400）
     with pytest.raises(ServiceError) as missing:
-        asyncio.run(
+        _run_db(
             training_service.issue_certification(
                 CertificationRequest(
                     trainee=TRAINEE_CERT,
@@ -471,7 +482,7 @@ def test_issue_certification_success_and_expiry() -> None:
     passed = _submit(quiz_id, TRAINEE_CERT, ANSWERS_ALL_RIGHT)
     assert passed["passed"] is True
 
-    cert = asyncio.run(
+    cert = _run_db(
         training_service.issue_certification(
             CertificationRequest(
                 trainee=TRAINEE_CERT,
@@ -503,7 +514,7 @@ def test_issue_certification_success_and_expiry() -> None:
     assert cert["days_to_expiry"] in (364, 365)
     CertificationResponse.model_validate(cert)
 
-    listed = asyncio.run(
+    listed = _run_db(
         training_service.list_certifications(
             trainee=TRAINEE_CERT,
             device_model="Etcher-A",
@@ -518,7 +529,7 @@ def test_issue_certification_success_and_expiry() -> None:
     CertificationListResponse.model_validate(listed)
 
     # 状态过滤生效
-    none_valid = asyncio.run(
+    none_valid = _run_db(
         training_service.list_certifications(
             trainee=TRAINEE_CERT,
             device_model=None,
@@ -542,7 +553,7 @@ def test_list_expiring_finds_soon_and_overdue(monkeypatch: pytest.MonkeyPatch) -
     assert passed["passed"] is True
 
     # ① 即将到期：有效期只有 1 天
-    soon = asyncio.run(
+    soon = _run_db(
         training_service.issue_certification(
             CertificationRequest(
                 trainee=TRAINEE_EXP,
@@ -567,7 +578,7 @@ def test_list_expiring_finds_soon_and_overdue(monkeypatch: pytest.MonkeyPatch) -
         trainee=TRAINEE_EXP, device_model="Etcher-A", expires_in_days=365
     )
 
-    result = asyncio.run(training_service.list_expiring(days=30, trace_id="test-expiring"))
+    result = _run_db(training_service.list_expiring(days=30, trace_id="test-expiring"))
     by_id = {item["id"]: item for item in result["items"]}
     ids = list(by_id)
 
@@ -587,11 +598,11 @@ def test_list_expiring_finds_soon_and_overdue(monkeypatch: pytest.MonkeyPatch) -
     CertificationListResponse.model_validate(result)
 
     # 窗口放大后 365 天的那条会进来（确认不是被别的原因漏掉）
-    wide = asyncio.run(training_service.list_expiring(days=400, trace_id="test-expiring-wide"))
+    wide = _run_db(training_service.list_expiring(days=400, trace_id="test-expiring-wide"))
     assert far in {item["id"] for item in wide["items"]}
 
     # 吊销记录仍能在认证列表里查到（只是不提醒）
-    revoked_list = asyncio.run(
+    revoked_list = _run_db(
         training_service.list_certifications(
             trainee=TRAINEE_EXP,
             device_model=None,
@@ -610,9 +621,9 @@ def test_list_expiring_finds_soon_and_overdue(monkeypatch: pytest.MonkeyPatch) -
 
 
 def test_missing_quiz_returns_none() -> None:
-    assert asyncio.run(training_service.get_quiz(MISSING_QUIZ_ID, trace_id="test-404")) is None
+    assert _run_db(training_service.get_quiz(MISSING_QUIZ_ID, trace_id="test-404")) is None
     assert (
-        asyncio.run(
+        _run_db(
             training_service.submit_attempt(
                 MISSING_QUIZ_ID,
                 QuizSubmitRequest(trainee=TRAINEE_GRADE, answers=[0]),
