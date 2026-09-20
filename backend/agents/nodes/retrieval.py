@@ -27,7 +27,7 @@ from typing import Any
 from ...setting import get_settings
 from ...tools import needs_external_lookup
 from ...tools.kb_tools import expand_queries, get_retriever
-from ..state import AgentState
+from ..state import AgentState, Evidence
 from . import NodeName, register_node
 
 logger = logging.getLogger(__name__)
@@ -154,18 +154,32 @@ async def rewrite(state: AgentState) -> dict[str, Any]:
     image_result = state.get("image_result")
     if image_result is not None:
         extra: list[str] = []
-        raw_text = getattr(image_result, "raw_text", "") or ""
         extracted = getattr(image_result, "extracted", {}) or {}
-        if raw_text.strip():
-            extra.append(raw_text.strip()[:200])
         codes = extracted.get("alarm_codes") or extracted.get("alarm_code")
         if isinstance(codes, str):
             codes = [codes]
+        # 报警码是强标识符（开发文档 5.2 FR-02）：必须放在最前面，
+        # 否则会被「最多 3 路检索式」的上限截掉 —— 实测 img001 就是这样：
+        # VLM 正确抽出 E-2041，但检索式被截断，没打到手册 5.2 节，链路最终误拒答。
         if codes:
             extra.append(" ".join(str(c) for c in codes))
-        for item in extra:
-            if item and item not in queries:
-                queries.append(item)
+        raw_text = (getattr(image_result, "raw_text", "") or "").strip()
+        if raw_text and not extra:
+            # 没有识别出任何强标识字段时才退化用全文（且截断），避免污染检索式
+            extra.append(raw_text[:120])
+        # 只取**强标识字段**（型号/部件/备件名与料号）作为补充检索式。
+        # 不要把整块识别结果（参数表、时间戳、详细描述）塞进检索式：
+        # 实测那样会把检索式变成一堆数字、并把锚点校验的文本面铺得过宽，
+        # 反而让本来能答的图片问题被拒（img002 从 OK 变 NOT_COVERED）。
+        for key in ("device_model", "components", "item_name", "code"):
+            value = extracted.get(key)
+            if isinstance(value, list):
+                extra.extend(str(v) for v in value if v)
+            elif value:
+                extra.append(str(value))
+        queries = [item for item in extra if item] + [
+            q for q in queries if q not in extra
+        ]
     # 图片识别失败（confidence 极低且无内容）时明确记一笔，便于排障
     errors: list[str] = []
     if image_result is not None and not (getattr(image_result, "extracted", {}) or {}):
@@ -274,6 +288,61 @@ def normalized_top_score(state: AgentState) -> float:
     return best
 
 
+def _image_evidence(image_result: Any) -> Evidence | None:
+    """把图片识别结果转成一个证据块（供上下文与引用使用）。
+
+    Returns None 表示没有可用的识别结果（未识别 / 识别失败 / 无字段）。
+    """
+
+    if image_result is None:
+        return None
+    extracted = dict(getattr(image_result, "extracted", {}) or {})
+    raw_text = str(getattr(image_result, "raw_text", "") or "").strip()
+    if not extracted and not raw_text:
+        return None
+
+    image_id = str(getattr(image_result, "image_id", "") or "")
+    image_type = str(getattr(image_result, "image_type", "") or "unknown")
+    lines = [f"图片识别结果（类型：{image_type}，置信度：{getattr(image_result, 'confidence', 0)}）"]
+    for key, value in extracted.items():
+        if isinstance(value, list):
+            value = "、".join(str(v) for v in value)
+        lines.append(f"- {key}：{value}")
+    if raw_text:
+        lines.append(f"- 图内文字：{raw_text[:400]}")
+
+    # 原图地址：按 image_id 在 uploads 目录里找实际文件（扩展名以落盘为准）
+    image_url = None
+    if image_id:
+        try:
+            upload_dir = get_settings().upload_dir
+            for path in upload_dir.glob(f"{image_id}.*"):
+                image_url = f"{get_settings().static_url_prefix}/uploads/{path.name}"
+                break
+        except Exception:  # noqa: BLE001 - 拿不到原图不影响作答
+            image_url = None
+
+    return Evidence(
+        chunk_id=f"img_{image_id or 'unknown'}",
+        text="\n".join(lines),
+        score=1.0,
+        metadata={
+            "doc_title": "用户上传图片的识别结果",
+            "version": "",
+            "category": "",
+            "device_model": str(extracted.get("device_model") or ""),
+            "page": 0,
+            "section": "",
+            "heading": image_type,
+            "index": -1,
+            "source_path": "",
+            "source_type": "image",
+            "image_url": image_url,
+            "retrieval": "image_evidence",
+        },
+    )
+
+
 async def build_context(state: AgentState) -> dict[str, Any]:
     """去重 + 版本择优 + [n] 编号 + token 预算裁剪，并给出证据是否充分的初值。"""
 
@@ -282,6 +351,15 @@ async def build_context(state: AgentState) -> dict[str, Any]:
 
     settings = get_settings()
     items = list(state.get("ranked") or state.get("candidates") or [])
+
+    # 图片识别结果本身也是**证据**：参数表截图、铭牌照片的答案就在图里。
+    # 不注入上下文的话，LLM 只能回「材料里没有这张参数表，无法给数值」而拒答 ——
+    # 实测 img002/img001 就是这样被误拒的。放在最前面并标 source_type=image，
+    # 引用卡片会按图片来源渲染（前端 CitationCard 已支持）。
+    image_evidence = _image_evidence(state.get("image_result"))
+    if image_evidence is not None:
+        items = [image_evidence, *items]
+
     context, blocks = _build_context(items, budget_tokens=settings.context_token_budget)
 
     normalized = normalized_top_score(state)

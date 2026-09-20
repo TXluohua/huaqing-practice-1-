@@ -148,7 +148,15 @@ def check_citations(
 
     result = CitationCheck()
     used: list[int] = []
-    for sentence in split_sentences(answer or ""):
+    # 逐行 → 逐句：结构化行（表格/围栏/分隔线/标题）不参与结论句统计。
+    # 必须与 enforce_citations 的判定口径**完全一致**，否则会出现
+    # 「归属侧保留表格行、校验侧把它算成无引用结论句」的错配（实测踩到过）。
+    sentences: list[str] = []
+    for line in (answer or "").split("\n"):
+        if not line.strip() or is_structural_line(line):
+            continue
+        sentences.extend(split_sentences(line.strip()))
+    for sentence in sentences:
         ids = parse_citation_ids(sentence)
         if ids:
             used.extend(ids)
@@ -201,8 +209,10 @@ class AnchorCheck:
 #: 设备型号/报警码形态：XH-900 / TMP-1600 / E-2041 / CVD200
 _MODEL_ID_RE = re.compile(r"[A-Za-z]{1,6}[-\s]?\d{2,4}")
 #: 数值 + 单位（问题里出现的具体阈值必须有依据）
+#: 前面不能是 `-` 或字母数字：型号里的数字（CVD-200、TMP-1600）不是「具体数值」
 _NUM_UNIT_RE = re.compile(
-    r"\d+(?:\.\d+)?\s*(?:h|s|min|Pa|kPa|MPa|sccm|slm|L|mL|mm|cm|kg|W|kW|MHz|ppm|r/min|rpm|片|次|天|小时|分钟|秒)"
+    r"(?<![-\w])\d+(?:\.\d+)?\s*"
+    r"(?:h|s|min|Pa|kPa|MPa|sccm|slm|L|mL|mm|cm|kg|W|kW|MHz|ppm|r/min|rpm|片|次|天|小时|分钟|秒)"
 )
 #: 疑问句里不承载「查什么」的通用词，不计入术语覆盖率
 _QUESTION_NOISE: frozenset[str] = frozenset(
@@ -211,6 +221,21 @@ _QUESTION_NOISE: frozenset[str] = frozenset(
         "应该", "可以", "规定", "要求", "标准", "情况", "问题", "时候", "步骤", "顺序",
         "方法", "处理", "执行", "分别", "具体", "一般", "通常", "以及", "还有", "如果",
         "怎样", "多久", "何时", "哪几", "几个", "一次", "多少", "什么", "怎么",
+        # 口语化提问里的填充词、程度词、泛化动词（实测 45 条集上会把可答问题误判为未覆盖）
+        "要是", "如果", "假设", "万一", "比如", "例如", "以上", "以下", "太低", "太高",
+        "压得", "毛病", "讲究", "我们", "你们", "他们", "准备", "打算", "换个", "换一个",
+        "这块", "那块", "这个", "那个", "用到", "配药", "药水", "注意", "怎么办", "干嘛",
+        "车间", "起火", "或者", "第一步", "第二步", "后续", "然后", "接着", "顺便", "麻烦",
+        "帮忙", "看下", "问下", "有没有", "能不能", "行不行", "大概", "差不多", "可能",
+        "有点", "挺", "超", "特别", "更", "最", "再", "又", "还", "就", "才", "都", "也",
+        "只", "光", "全", "非常", "一下", "一些", "点儿", "点儿", "啥", "咋", "哦", "嗯",
+        "哪里", "哪儿", "哪种", "什么样",
+        # 提问框架名词：它们问的是「想知道哪一类信息」，不是知识库里的实体。
+        # 负样本靠的是「年度/维保/合同/费用/折旧/年限/资产/编号/预算/排班表」这类实体词，
+        # 不在这张表里，因此不会削弱未覆盖判定（45 条集上实测：正样本误杀 0、负样本 5/5 仍拦住）。
+        "后果", "限制", "影响", "原因", "效果", "风险", "区别", "关系", "做法", "作用",
+        "好处", "坏处", "要点", "前提", "依据", "结论", "表现", "现象", "趋势", "幅度",
+        "程度", "细节", "情况", "步骤", "方法", "措施", "要求", "标准", "判据", "区别",
     }
 )
 
@@ -270,7 +295,13 @@ def anchor_check(
 
     models = [m for m in {x.strip() for x in _MODEL_ID_RE.findall(question or "")} if m]
     missing_models = [m for m in models if m.lower() not in haystack_norm]
-    numbers = [n.strip() for n in {x.strip() for x in _NUM_UNIT_RE.findall(question or "")}]
+
+    # 数值锚点前先把型号/报警码从文本里剔除：否则「CVD-200 片内均匀性」里的 200
+    # 会被当成「数值 200 片」要求材料里出现，把一个可答问题判成无依据（实测踩到过）
+    scrubbed = question or ""
+    for model in models:
+        scrubbed = scrubbed.replace(model, " ")
+    numbers = [n.strip() for n in {x.strip() for x in _NUM_UNIT_RE.findall(scrubbed)}]
     missing_numbers = [n for n in numbers if n.lower() not in haystack_norm]
 
     # 型号片段（如 XH / 900）已由型号规则覆盖，避免在术语里重复报一次
@@ -335,6 +366,19 @@ def _normalize_for_match(text: str) -> str:
 
 def _bigrams(text: str) -> set[str]:
     return {text[i : i + 2] for i in range(len(text) - 1)} if len(text) > 1 else {text}
+
+
+#: 结构化行：表格行、代码围栏、分隔线、标题 —— 原样保留，不参与逐句判定
+_STRUCTURAL_LINE_PATTERNS = (
+    re.compile(r"^\s*\|.*\|\s*$"),
+    re.compile(r"^\s*```"),
+    re.compile(r"^\s*[-*_]{3,}\s*$"),
+    re.compile(r"^\s*#{1,6}\s"),
+)
+
+
+def is_structural_line(line: str) -> bool:
+    return any(pattern.match(line) for pattern in _STRUCTURAL_LINE_PATTERNS)
 
 
 def _bigram_overlap(text: str, other: str) -> float:
@@ -415,14 +459,15 @@ def enforce_citations(
     out_lines: list[str] = []
     for line in answer.split("\n"):
         stripped_line = line.strip()
-        if not stripped_line:
-            out_lines.append(line)
-            continue
-        # 非结论行（标题、依据清单、表格、代码块等）原样保留
-        if not is_claim_sentence(stripped_line):
+        if not stripped_line or is_structural_line(line):
             out_lines.append(line)
             continue
 
+        # 逐句判定，而不是「整行是否结论行」——
+        # 校验（check_citations）是逐句统计的，若这里按整行豁免，
+        # 「建议先检查腔体密封，若无效应停机处理。同时记录报警时间戳。」这类行
+        # 会因为行首「建议」被整行跳过，行内后半句就成了漏网的无引用结论句
+        # （实测 45 条集上 q009/q039 因此 coverage 0.889/0.909 被误拒）。
         pieces = split_sentences(stripped_line)
         if not pieces:
             out_lines.append(line)
@@ -434,6 +479,9 @@ def enforce_citations(
                 kept_pieces.append(piece)
                 continue
             if parse_citation_ids(piece):
+                # 已有编号的句子原样保留 —— **包括编号越界的句子**：
+                # 伪造引用是模型行为红线，必须留在答案里被 check_citations 抓出来并拒答，
+                # 绝不能在这里静默改成「看起来正确」的编号（开发文档 §8.2 明确要求可识别）
                 kept_pieces.append(piece)
                 stats["kept"] += 1
                 continue
@@ -548,6 +596,11 @@ def should_reject(
         reasons.append("未检索到可用证据")
     if not (answer or "").strip():
         reasons.append("未生成答案")
+    if blocks and not check.used_ids:
+        # 有材料却一句引用都没挂 = 无法溯源（实测：LLM 只输出「无法确认…」这类软拒答时，
+        # 去掉自相矛盾的拒答开头后会剩下无引用的空壳答案）。按 fail-closed 判未覆盖。
+        reasons.append("答案未引用任何材料（无法溯源）")
+
     if check.has_fake_citation:
         reasons.append(f"引用校验不通过：存在不存在的引用编号 {check.fake_ids}")
     threshold = (
@@ -605,6 +658,29 @@ def should_reject(
     return RejectionDecision(False, "OK", [], materials)
 
 
+#: 拒答模板的首行（LLM 偶发把它当成答案开头，却继续给出正文）
+_REFUSAL_HEADER_RE = re.compile(r"^\s*知识库未覆盖该问题[，,][^\n]*?步骤[。.：:]?\s*$", re.MULTILINE)
+
+
+def strip_misleading_refusal_prefix(answer: str) -> tuple[str, bool]:
+    """剥掉「先声明未覆盖、再给答案」的那个自相矛盾的开头。
+
+    实测（图片类问题）：LLM 会在答案首行写上「知识库未覆盖该问题，不给出具体操作步骤。」
+    然后**继续给出带引用的具体步骤** —— 状态是 OK、引用也齐全，但气泡里读起来
+    像是系统在自打脸。放行时把这一行去掉；若去掉后没有内容了，说明模型确实是在拒答，
+    那就交给 verify 正常拒答（此时返回空串，verify 会以「未生成答案」处理）。
+    """
+
+    text = answer or ""
+    if not _REFUSAL_HEADER_RE.search(text):
+        return answer, False
+    stripped = _REFUSAL_HEADER_RE.sub("", text, count=1)
+    # 只剩空白 → 视为「模型确实在拒答」，不要伪装成有答案
+    if not stripped.strip():
+        return "", True
+    return stripped.lstrip("\n").strip(), True
+
+
 def build_not_covered_answer(decision: RejectionDecision) -> str:
     """拒答话术：只给材料清单与建议，**不给操作步骤**。"""
 
@@ -630,6 +706,7 @@ __all__ = [
     "authority_score",
     "best_supporting_block",
     "enforce_citations",
+    "strip_misleading_refusal_prefix",
     "build_not_covered_answer",
     "build_uncertain_notes",
     "check_citations",

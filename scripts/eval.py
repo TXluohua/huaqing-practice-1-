@@ -111,6 +111,11 @@ class ItemResult:
     rerank_provider: str = ""
     #: 本次检索是否用到了外部数据源（备件台账 / 工单 MCP）—— 决定延迟按哪条预算看
     external_used: bool = False
+    #: 引用归属统计（LLM 路径）：自动补上的引用数 / 因无依据被省略的句子数
+    attributed: int = 0
+    dropped: int = 0
+    #: 结论句总数（用于识别「空分母」条目：没有结论句就没有覆盖率可言）
+    total_claims: int = 0
     top5_hit: float = 0.0
     reciprocal_rank: float = 0.0
     ndcg5: float = 0.0
@@ -141,6 +146,9 @@ class ItemResult:
             "n_citations": self.n_citations,
             "rerank_provider": self.rerank_provider,
             "external_used": self.external_used,
+            "citation_attributed": self.attributed,
+            "citation_dropped": self.dropped,
+            "total_claims": self.total_claims,
             "retrieved_sections": self.retrieved_sections,
             "answer_head": self.answer_head,
             "notes": self.notes,
@@ -171,6 +179,10 @@ def evaluate_item(item: dict[str, Any], result: dict[str, Any], latency_s: float
     out.coverage = float(verification.get("coverage") or 0.0)
     out.fake_citations = list(verification.get("fake_citation_ids") or [])
     out.cited_blocks = len(blocks)
+    enforcement = structured.get("citation_enforcement") or {}
+    out.attributed = int(enforcement.get("attributed") or 0)
+    out.dropped = int(enforcement.get("dropped") or 0)
+    out.total_claims = int(verification.get("total_claims") or 0)
     out.n_citations = len(result.get("citations") or [])
     ranked = list(result.get("ranked") or [])
     if ranked:
@@ -258,7 +270,12 @@ def summarize(results: Sequence[ItemResult], *, latency_p95: float) -> dict[str,
         "top5_hit_rate": mean(r.top5_hit for r in with_labels),
         "mrr": mean(r.reciprocal_rank for r in with_labels),
         "ndcg5": mean(r.ndcg5 for r in with_labels),
-        "citation_coverage": mean(r.coverage for r in positives),
+        "citation_coverage": mean(
+            (r.coverage if r.total_claims else 1.0) for r in positives
+        ),
+        "citation_coverage_vacuous": sum(
+            1 for r in positives if not r.total_claims
+        ),
         "citation_precision": round(citation_precision, 4),
         "citation_precision_note": (
             f"已发出引用 {refs_total} 项，伪造 {fake_total} 项"
@@ -280,6 +297,11 @@ def summarize(results: Sequence[ItemResult], *, latency_p95: float) -> dict[str,
             else 0.0
         ),
         "latency_p95_s": round(latency_p95, 3),
+        "citation_attributed_total": sum(r.attributed for r in results),
+        "citation_dropped_total": sum(r.dropped for r in results),
+        "generator": next(
+            (str(((r.labels and "") or "") or "") for r in results), ""
+        ),
         "rerank_provider": next((r.rerank_provider for r in results if r.rerank_provider), ""),
         "status_counts": {
             status: sum(1 for r in results if r.status == status)

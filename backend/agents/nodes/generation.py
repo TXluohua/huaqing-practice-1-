@@ -30,6 +30,7 @@ from typing import Any, Sequence
 from ...rag.citation import (
     authority_score,
     enforce_citations,
+    strip_misleading_refusal_prefix,
     build_not_covered_answer,
     build_uncertain_notes,
     check_citations,
@@ -314,6 +315,21 @@ async def verify(state: AgentState) -> dict[str, Any]:
     answer = str(state.get("answer") or "")
     blocks = list(state.get("context_blocks") or [])
 
+    # 兜底不变量：**任何路径**产出的答案，在进入校验前都要过一遍引用归属。
+    # 45 条集上实测出现过 coverage 0.80 / 0.889 / 0.909 的正样本（其中两条因此被误拒），
+    # 而 generate 里那一次归属本该保证 100% —— 与其继续追是哪条路径漏了，
+    # 不如把「发出去的每条结论都有依据」变成校验前的硬前置（幂等，重复执行无副作用）。
+    # LLM 偶发「首行声明未覆盖、后面照常给答案」：放行前把这行自相矛盾的开头剥掉
+    answer, stripped_header = strip_misleading_refusal_prefix(answer)
+    if stripped_header:
+        logger.debug("已剥掉答案开头误加的「未覆盖」声明")
+
+    enforcement: dict[str, Any] = {}
+    if answer.strip() and blocks:
+        answer, enforcement = enforce_citations(
+            answer, blocks, threshold=settings.citation_attribution_threshold
+        )
+
     citations = evidence_to_citations(blocks)
     check = check_citations(answer, blocks, citations)
     authority = authority_score(blocks)
@@ -349,7 +365,9 @@ async def verify(state: AgentState) -> dict[str, Any]:
         label = confidence_label(confidence, settings=settings)
 
     notes = build_uncertain_notes(decision, check)
-    enforcement = (state.get("answer_structured") or {}).get("citation_enforcement") or {}
+    previous = (state.get("answer_structured") or {}).get("citation_enforcement") or {}
+    if not enforcement:
+        enforcement = previous
     if enforcement.get("dropped"):
         notes.append(
             f"有 {enforcement['dropped']} 句结论因未在材料中找到依据被省略"
@@ -362,6 +380,9 @@ async def verify(state: AgentState) -> dict[str, Any]:
         "uncertain": notes,
         "timings": _elapsed(started, "verify"),
     }
+    # 无论放行还是拒答，都回写最终答案：verify 里可能又做过一次引用归属，
+    # 若不回写，流出去的就是「校验过的答案」和「发出去的答案」不一致
+    out["answer"] = answer
     if decision.reject:
         # 拒答：清空引用、改写答案，绝不给出无依据的操作步骤
         out["citations"] = []

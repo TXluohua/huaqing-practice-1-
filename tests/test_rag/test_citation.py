@@ -18,6 +18,7 @@ from backend.agents.state import Evidence  # noqa: E402
 from backend.rag.citation import (  # noqa: E402
     anchor_check,
     enforce_citations,
+    strip_misleading_refusal_prefix,
     build_not_covered_answer,
     check_citations,
     compute_confidence,
@@ -216,6 +217,59 @@ def test_enforce_citations_attributes_and_drops() -> None:
     assert "[2]" in fixed, fixed            # 归属到「真空泵抽速」那一块
     assert "股市" not in fixed              # 无依据的句子被省略
     assert check_citations(fixed, BLOCKS).coverage == 1.0
+
+
+def test_enforce_citations_does_not_repair_fake_ids() -> None:
+    """伪造/越界编号**不得**被静默修复：要留在答案里被 verify 抓出来拒答。
+
+    这是刻意的取舍 —— enforcement 只负责「补上缺失的引用」与「丢弃无依据的句子」；
+    一旦连伪造编号也顺手改掉，模型的引用造假行为就被洗白了（开发文档 §8.2 要求可识别）。
+    """
+
+    answer = "- 腔体真空度异常先检查腔体门 O-ring [9]。"
+    fixed, stats = enforce_citations(answer, BLOCKS, threshold=0.45)
+    assert "[9]" in fixed, fixed                      # 原样保留
+    assert stats["attributed"] == 0
+    check = check_citations(fixed, BLOCKS)
+    assert check.fake_ids == [9]                      # 仍能被识别
+    assert check.coverage < 1.0
+
+
+def test_enforce_citations_processes_each_sentence_not_whole_line() -> None:
+    """行首被豁免（建议/注意…）不代表整行可以跳过：行内后半句仍要归属或省略。
+
+    这是实测缺陷的回归：校验按句统计覆盖率，归属若按整行豁免，
+    就会出现漏网的无引用结论句，导致覆盖率不足被误拒（q009/q039）。
+    """
+
+    answer = (
+        "建议先检查腔体密封，若无效应停机处理。同时记录报警时间戳与压力读数。\n"
+        "| 参数 | 值 |\n"
+        "```\ncode\n```"
+    )
+    fixed, stats = enforce_citations(answer, BLOCKS, threshold=0.45)
+    assert stats["dropped"] >= 1, stats          # 无依据的那半句被省略
+    check = check_citations(fixed, BLOCKS)
+    # 结论句全被省略时是「空分母」：不应被算成覆盖率不达标
+    assert check.total_claims == 0 or check.coverage == 1.0, (check.total_claims, check.coverage)
+    assert "| 参数 | 值 |" in fixed and "```" in fixed, "结构化行必须原样保留"
+
+
+def test_strip_misleading_refusal_prefix() -> None:
+    """「先声明未覆盖、再给答案」的开头要剥掉；纯粹拒答则保持空（交给 verify 拒答）。"""
+
+    hybrid = "知识库未覆盖该问题，不给出具体操作步骤。\n\n- 先检查腔体门 O-ring [1]。"
+    fixed, stripped = strip_misleading_refusal_prefix(hybrid)
+    assert stripped is True
+    assert "知识库未覆盖" not in fixed and "O-ring" in fixed
+
+    pure_refusal = "知识库未覆盖该问题，不给出具体操作步骤。"
+    fixed2, stripped2 = strip_misleading_refusal_prefix(pure_refusal)
+    assert stripped2 is True and fixed2 == "", "纯拒答不应被伪装成有答案"
+
+    normal = "- 先检查腔体门 O-ring [1]。"
+    fixed3, stripped3 = strip_misleading_refusal_prefix(normal)
+    assert stripped3 is False and fixed3 == normal
 
 
 def test_enforce_citations_keeps_non_claim_lines() -> None:
