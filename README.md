@@ -10,7 +10,7 @@
 ## 当前状态
 
 **端到端已跑通**：LangGraph 九节点主链路 + RAG 检索生成 + FastAPI 接口层 + Vue3 前端。
-**单测 91 passed；接口层 11 个接口全通；健康检查 7 个组件全 ok。**
+**单测 125 passed；接口层 32 个接口全通（含新增的业务接口 21 个）；健康检查 7 个组件全 ok。**
 
 | 层 | 状态 | 位置 |
 | --- | --- | --- |
@@ -18,12 +18,13 @@
 | 主图（9 节点 + 条件边） | ✅ | `backend/agents/graph.py`、`backend/agents/nodes/` |
 | 检索与生成（RAG） | ✅ | `backend/rag/`、`backend/tools/kb_tools.py` |
 | 跨源检索（MCP 工单） | ✅ | `backend/mcp_servers/ticket_server.py`、`backend/mcp_client.py` |
-| 接口层（11 个接口 + SSE） | ✅ | `backend/routers/` |
-| 服务层 | ✅ | `backend/services/{chat_service,kb_service}.py` |
-| 业务库与会话检查点 | ✅ | `backend/db.py`（业务）、`backend/memory.py`（检查点） |
+| 接口层（32 个接口 + SSE） | ✅ | `backend/routers/` |
+| 服务层 | ✅ | `backend/services/{chat_service,kb_service,plan_service,parts_service,training_service}.py` |
+| 业务库与会话检查点 | ✅ | `backend/db.py`（12 张表）、`backend/memory.py`（检查点） |
 | 应用入口与预热 | ✅ | `backend/main.py`、`backend/dependency.py` |
 | 部署产物 | ✅ | `deploy/`、`docker-compose.yml`（nginx 已关 SSE 缓冲） |
-| 前端 | ✅ | `frontend/`（Vue3 + Vite + Element Plus） |
+| 前端（问答主链路） | ✅ | `frontend/`（Vue3 + Vite + Element Plus） |
+| 前端（三块新业务） | ⏳ 待第三人 | 接口已就绪，见 `前端对接说明（三块新业务）.md` |
 
 ### 实测指标（真实 LLM + 真实 VLM，2026-09-20）
 
@@ -32,16 +33,18 @@
 | G1 | Top-5 检索命中率 | ≥ 80% | **100%**（45 条文本黄金集） |
 | G2 | 引用覆盖率 | **100%（不可降级）** | **100%** |
 | G2 | 引用真实性 | ≥ 95% | **100%**（270 项引用、0 伪造） |
-| G3 | 要点命中率（严格口径） | ≥ 80% | **89.2%**（未配 LLM 的抽句式降级值为 44.7%） |
+| G3 | 要点命中率（严格口径 / 宽松口径） | ≥ 80% | **89.7%** / **100%**（185/185 要点；未配 LLM 的抽句式降级值为 44.7%） |
 | G3 | 无依据拒答率 | ≥ 90% | **100%**（5/5 负样本） |
 | G4 | 图片关键信息提取与作答 | ≥ 85% | **5/5 通过**（含 1 条按设计拒答的模糊纸条） |
-| G5 | 文字 P95 / 带外部源 P95 | ≤ 8s / ≤ 15s | 空闲环境 **3.9s / 4.3s**；高负载机器 13.6s / 19.5s |
+| G5 | 文字 P95 / 带外部源 P95 | ≤ 8s / ≤ 15s | 空闲环境 **3.9s / 4.3s**；同机并行跑演示服务与子任务时 24.0s / 23.3s |
 | — | 误拒正样本 | 0 | **0 / 40** |
 | — | MRR / NDCG@5 | — | 0.9750 / 0.9785 |
+| — | 引用归属（LLM 路径） | — | 自动补引用 45 句 / 因无依据省略 21 句（省略会在拒答原因里说明） |
 
 > 复跑方式见下方「评测与验收」。逐项证据见 `功能完成度清单.md`，交付清单见 `交付说明.md`。
 
-**尚未完成**：图片知识侧入库（抽图无 VLM caption）、docx/pptx/xlsx 解析（需 MarkItDown）、
+**尚未完成**：三块新业务的**前端页面**（后端已就绪，交接见 `前端对接说明（三块新业务）.md`）、
+图片知识侧入库（抽图无 VLM caption）、docx/pptx/xlsx 解析（需 MarkItDown）、
 检索层权限过滤规则（缺权限分级表）、会话删除 / 重命名。
 
 **已知限制（2026-09-18 实测，详见 `功能完成度清单.md` §2.2b 与 `data/eval/badcases.md`）**：
@@ -55,6 +58,33 @@
 | 图片知识侧不入库 | `kb_image` 表 0 行，抽图不写 caption | 图纸/参数表截图不能**被检索到**（但作为**提问图片**已完全可用） |
 
 > 逐项完成度与实测证据见 **`功能完成度清单.md`**。
+
+---
+
+## 三块新业务（后端已完成，前端待第三人）
+
+原开发文档 §1.3 列为「不做 / 后续批次」的三块功能，按项目方要求补齐**后端**：
+
+| 功能 | 端点数 | 服务层 | 数据表 | 一句话 |
+| --- | --- | --- | --- | --- |
+| 维护计划生成 | 4 | `backend/services/plan_service.py` | `maintenance_plan` | 按设备 + 运行数据，从手册**原文**抽周期算出到期项；查不到周期的如实进 `uncovered` |
+| 备件商城与采购 | 11 | `backend/services/parts_service.py` | `part_order`、`part_settlement` | 库存 / 价格 / 替代件 → 采购申请单 → 人工确认 → 收货 → 结算台账 |
+| 考核认证 | 6 | `backend/services/training_service.py` | `training_quiz`、`training_attempt`、`certification` | 按设备出题（每题带依据）→ 判分 → 显式发证 → 到期提醒 |
+
+三条红线（**代码层强制**，不是文档约定）：
+
+1. **不对供应商发起真实下单** —— 只生成内部采购申请单，`approve` 即人工确认点；
+2. **替代件必须有兼容性依据** —— 台账里查不到 `basis` 直接 `400 SUBSTITUTE_BASIS_REQUIRED`；
+   禁止替代清单会随备件一起返回；
+3. **不自动发证** —— 判分接口的 `certification_id` 恒为 `null`，发证须显式调用并指定等级与
+   有效期，证书固定标注「内部授权，不代表设备原厂认证」。
+
+零幻觉同样落到这三块：计划项的周期值只能从检索到的原文里正则抽取，每条带 `evidence`；
+出题前先检索，LLM 生成的题目若 `evidence` 越界或引用了不在证据里的数字则**丢弃该题**，
+一题都出不来就返回 `422 QUIZ_GENERATION_FAILED`（宁可不命题，也不出无依据的题）。
+
+- 接口清单：`接口文档.md` §10
+- 前端对接（请求 / 响应 / 按钮状态机 / 演示脚本）：`前端对接说明（三块新业务）.md`
 
 ---
 
