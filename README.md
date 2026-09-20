@@ -10,7 +10,7 @@
 ## 当前状态
 
 **端到端已跑通**：LangGraph 九节点主链路 + RAG 检索生成 + FastAPI 接口层 + Vue3 前端。
-**单测 131 passed；接口层 35 个接口全通（含新增的业务接口 24 个）；健康检查 7 个组件全 ok。**
+**单测 139 passed；接口层 35 个接口全通（含新增的业务接口 24 个）；健康检查 7 个组件全 ok。**
 
 | 层 | 状态 | 位置 |
 | --- | --- | --- |
@@ -23,8 +23,8 @@
 | 业务库与会话检查点 | ✅ | `backend/db.py`（12 张表）、`backend/memory.py`（检查点） |
 | 应用入口与预热 | ✅ | `backend/main.py`、`backend/dependency.py` |
 | 部署产物 | ✅ | `deploy/`、`docker-compose.yml`（nginx 已关 SSE 缓冲） |
-| 前端（问答主链路） | ✅ | `frontend/`（Vue3 + Vite + Element Plus） |
-| 前端（三块新业务） | ⏳ 待第三人 | 接口已就绪，见 `前端对接说明（三块新业务）.md` |
+| 前端（问答主链路） | ✅ | `frontend/`（Vue3 + Vite + Element Plus）：`/chat`、`/history`、`/admin` |
+| 前端（三块新业务） | ✅ 独立页面已就位，⏳ 打磨待第三人 | **独立路由** `/plans`、`/parts`、`/procurement`、`/training`，顶栏与问答分组并列，见 `前端对接说明（三块新业务）.md` |
 
 ### 实测指标（真实 LLM + 真实 VLM，2026-09-20）
 
@@ -70,6 +70,17 @@
 | 维护计划生成 | 4 | `backend/services/plan_service.py` | `maintenance_plan` | 按设备 + 运行数据，从手册**原文**抽周期算出到期项；查不到周期的如实进 `uncovered` |
 | 备件商城与采购 | 14 | `backend/services/parts_service.py` | `part_order`、`part_settlement` | 商城目录 → **购物车（= 草稿单，可加/改/删）** → 提交 → 人工确认 → 收货 → 结算台账 |
 | 考核认证 | 6 | `backend/services/training_service.py` | `training_quiz`、`training_attempt`、`certification` | 按设备出题（每题带依据）→ 判分 → 显式发证 → 到期提醒 |
+
+**与问答完全独立**（项目方明确要求，且已落地为可执行的检查）：
+
+- 接口：各有自己的前缀 `/api/plans`、`/api/parts`、`/api/training`，与 `/api/chat` 不相交，
+  不需要会话、`qa_id` 或 SSE；
+- 代码：问答链路不 import 这三块业务，三块业务也不 import 问答链路
+  （`tests/test_api/test_module_independence.py` 用 AST 检查 import，越界即失败）；
+- 页面：四个独立路由 + 顶栏独立分组，业务页不引用 `@/api/chat` / `@/utils/sse` / `@/stores/*`。
+
+> 注意区分：问答页里的「备件问答」与「`mode=training` 分层讲解」是**问答能力**；
+> 商城下单、采购结算、出题发证这些**业务操作**只在独立页面里做。
 
 三条红线（**代码层强制**，不是文档约定）：
 
