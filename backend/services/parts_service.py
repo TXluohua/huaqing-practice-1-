@@ -567,12 +567,16 @@ async def create_order(payload: OrderCreateRequest, *, trace_id: str) -> dict:
     只落**内部申请单**：每条明细逐条回台账校验编码与替代件依据，
     单价取台账价格、`amount = qty * unit_price`、`total_amount` 汇总。
     **不向供应商发起任何真实下单**（开发文档 §1.3 边界）。
+
+    `items` 允许为空 —— 空草稿单就是「空购物车」（购物车页可以先建车，再用
+    `POST …/items` 逐件加入）；但**空车不能提交**（`submit_order` 返回 400 `EMPTY_ORDER`）。
     """
 
     _require_db()
+    # 允许空明细：空草稿单 = 空购物车（前端可以先建车再逐件加入）。
+    # 空车不能提交 —— 那道闸门在 submit_order 里（400 EMPTY_ORDER），
+    # 而不是在这里拦「建车」，否则购物车页一进来就不可能有车。
     items = [await _resolve_order_item(req) for req in payload.items]
-    if not items:
-        raise ServiceError(400, "INVALID_ARGUMENT", "采购申请单至少需要一条明细")
     total_amount = round(sum(_as_float(item["amount"]) for item in items), 2)
 
     async with db.session_scope() as session:

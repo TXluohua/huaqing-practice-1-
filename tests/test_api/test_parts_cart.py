@@ -1,6 +1,7 @@
 """购物车（= `draft` 采购申请单的明细维护）测试。
 
 覆盖：
+    ⓪ 空购物车可直接创建（先有车再加件），但空车不能提交（400 EMPTY_ORDER）
     ① 加入购物车：单价/库存回台账取、金额与合计正确、同编码**累加数量**不产生重复行
     ② 改数量：金额与合计重算；数量越界被 schema 拒；明细不存在 404 ITEM_NOT_FOUND
     ③ 移出购物车：删行、合计重算、允许清空；明细不存在 404
@@ -178,6 +179,43 @@ def test_add_item_requires_substitute_basis_and_existing_code() -> None:
         # 被拒的两次都不应改动购物车
         stored = await parts_service.get_order(oid, trace_id=TRACE)
         assert stored is not None and len(stored["items"]) == 1
+
+    _run(scenario())
+
+
+def test_empty_cart_can_be_created_but_not_submitted() -> None:
+    """空购物车可以直接建（不必先有备件），但**空车不能提交**。
+
+    这条口径是为了让购物车页能「一进来就有车」：`POST /parts/orders` 允许 items 为空，
+    真正的闸门放在提交那一步（400 EMPTY_ORDER）。
+    """
+
+    async def scenario() -> None:
+        payload = OrderCreateRequest(items=[], applicant=APPLICANT, purpose="空车")
+        cart = await parts_service.create_order(payload, trace_id=TRACE)
+        empty = PartOrderResponse.model_validate(cart)
+        assert empty.status == "draft"
+        assert empty.items == [] and empty.total_amount == 0.0
+        assert empty.allowed_actions == ["submit", "cancel"]
+
+        # 空车提交被拦
+        await expect_error(
+            parts_service.submit_order(
+                empty.id, OrderActionRequest(operator=APPLICANT), trace_id=TRACE
+            ),
+            status=400,
+            code="EMPTY_ORDER",
+        )
+
+        # 加入一件后可以正常提交
+        view = await parts_service.add_order_item(
+            empty.id, OrderItemRequest(code="SP-ETA-0101", qty=1), trace_id=TRACE
+        )
+        assert PartOrderResponse.model_validate(view).total_amount == 185.0
+        done = await parts_service.submit_order(
+            empty.id, OrderActionRequest(operator=APPLICANT), trace_id=TRACE
+        )
+        assert done is not None and done["status"] == "submitted"
 
     _run(scenario())
 

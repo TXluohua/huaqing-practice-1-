@@ -419,7 +419,9 @@ class OrderItemUpdateRequest(BaseModel):
 
 
 class OrderCreateRequest(BaseModel):
-    items: list[OrderItemRequest] = Field(min_length=1)
+    #: 初始明细；**允许为空** —— 空明细的草稿单就是「空购物车」（先建车再逐件加入），
+    #: 但空车不能提交（提交时 400 EMPTY_ORDER）
+    items: list[OrderItemRequest] = Field(default_factory=list)
     device_model: str = ""
     purpose: str = Field(default="", description="用途/关联工单")
     applicant: str = ""
