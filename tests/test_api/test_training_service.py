@@ -8,6 +8,8 @@
     ⑤ 通过的 attempt 发证成功且 `expires_at == issued_at + valid_days`
     ⑥ `list_expiring` 能捞出即将到期 / 已过期（吊销的不提醒）
     ⑦ 找不到 quiz 返回 None（另含 422 不出无依据之题、LLM 路径丢弃非法题）
+    ⑧ 数值溯源两级口径：干扰项可跨片段取真实值，自造数值仍被拦；
+       正确答案（含简答要点）必须落在所引片段；缩水时如实回传 requested/dropped
 
 不依赖 DEEPSEEK_API_KEY：`tests/conftest.py` 的 autouse 夹具默认清空云端密钥，
 本文件又在用例内显式 monkeypatch `llm_client.available -> False` / 假 `chat_json`，
@@ -22,10 +24,9 @@ from __future__ import annotations
 import asyncio
 import sys
 import uuid
-from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Awaitable
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
@@ -58,13 +59,25 @@ MISSING_QUIZ_ID = 9_999_999_999
 MISSING_ATTEMPT_ID = 9_999_999_998
 
 
-@pytest.fixture(scope="module", autouse=True)
-def _db_ready() -> Iterator[None]:
-    """库表已建好（真实 SQLite），否则整文件跳过没有意义 —— 直接断言失败。"""
+async def _with_db(scenario: Awaitable[Any]) -> Any:
+    """每个场景自带一次 init_db / dispose_db（连接不跨事件循环复用）。
 
-    ok, detail = asyncio.run(db.init_db())
+    必须与场景**在同一个事件循环内**：`db._engine` 是模块级全局缓存，
+    若在 loop A 里 init、在 loop B 里用，MySQL（aiomysql）会报
+    「Future attached to a different loop」；SQLite 的连接实现恰好容忍这种用法，
+    所以这个错误只在 MySQL 下暴露（与 test_parts_service.py 同一范式）。
+    """
+
+    ok, detail = await db.init_db()
     assert ok, f"数据库不可用：{detail}"
-    yield
+    try:
+        return await scenario
+    finally:
+        await db.dispose_db()
+
+
+def _run_db(scenario: Awaitable[Any]) -> Any:
+    return asyncio.run(_with_db(scenario))
 
 
 # --------------------------------------------------------------------------- #
@@ -167,12 +180,12 @@ def _insert_quiz(items: list[dict[str, Any]], *, topic: str) -> int:
             await session.flush()
             return int(row.id or 0)
 
-    return asyncio.run(_inner())
+    return _run_db(_inner())
 
 
 def _submit(quiz_id: int, trainee: str, answers: list[Any]) -> dict[str, Any]:
     payload = QuizSubmitRequest(trainee=trainee, answers=answers, duration_s=123.0)
-    result = asyncio.run(training_service.submit_attempt(quiz_id, payload, trace_id="test-submit"))
+    result = _run_db(training_service.submit_attempt(quiz_id, payload, trace_id="test-submit"))
     assert result is not None
     return result
 
@@ -208,7 +221,7 @@ def _insert_certification(
             await session.flush()
             return int(row.id or 0)
 
-    return asyncio.run(_inner())
+    return _run_db(_inner())
 
 
 # --------------------------------------------------------------------------- #
@@ -228,7 +241,7 @@ def test_generate_quiz_every_item_has_evidence(monkeypatch: pytest.MonkeyPatch) 
         n_items=4,
         question_types=["single", "judgement", "multiple", "short"],
     )
-    result = asyncio.run(training_service.generate_quiz(payload, trace_id="test-generate"))
+    result = _run_db(training_service.generate_quiz(payload, trace_id="test-generate"))
 
     assert result["id"] > 0
     assert result["generator"] == "extractive-fallback"
@@ -257,7 +270,7 @@ def test_generate_quiz_every_item_has_evidence(monkeypatch: pytest.MonkeyPatch) 
     QuizResponse.model_validate(result)
 
     # 落库可读回
-    fetched = asyncio.run(training_service.get_quiz(result["id"], trace_id="test-generate"))
+    fetched = _run_db(training_service.get_quiz(result["id"], trace_id="test-generate"))
     assert fetched is not None
     assert fetched["id"] == result["id"]
     assert fetched["n_items"] == result["n_items"]
@@ -271,7 +284,7 @@ def test_generate_quiz_without_evidence_raises_422(monkeypatch: pytest.MonkeyPat
 
     payload = QuizGenerateRequest(device_model="不存在的型号-ZZZ", topic="不存在", n_items=2)
     with pytest.raises(ServiceError) as excinfo:
-        asyncio.run(training_service.generate_quiz(payload, trace_id="test-empty"))
+        _run_db(training_service.generate_quiz(payload, trace_id="test-empty"))
 
     assert excinfo.value.status_code == 422
     assert excinfo.value.code == "QUIZ_GENERATION_FAILED"
@@ -282,7 +295,7 @@ def test_generate_quiz_rejects_unknown_question_type() -> None:
 
     payload = QuizGenerateRequest(device_model="Etcher-A", question_types=["essay"])
     with pytest.raises(ServiceError) as excinfo:
-        asyncio.run(training_service.generate_quiz(payload, trace_id="test-bad-type"))
+        _run_db(training_service.generate_quiz(payload, trace_id="test-bad-type"))
     assert excinfo.value.status_code == 400
     assert excinfo.value.code == "INVALID_ARGUMENT"
 
@@ -342,7 +355,7 @@ def test_llm_path_drops_items_with_invalid_evidence_index(
     payload = QuizGenerateRequest(
         device_model="Etcher-A", topic="日常点检", n_items=4, question_types=["single", "judgement"]
     )
-    result = asyncio.run(training_service.generate_quiz(payload, trace_id="test-llm"))
+    result = _run_db(training_service.generate_quiz(payload, trace_id="test-llm"))
 
     assert result["generator"] == f"llm:{settings.deepseek_model}"
     assert result["n_items"] == 1, "只有 1 道题同时满足 evidence_index 与数值可溯源"
@@ -353,6 +366,168 @@ def test_llm_path_drops_items_with_invalid_evidence_index(
     # 提示词里必须给出片段编号与 evidence_index 要求（否则模型无从给出合法序号）
     prompt = captured["messages"][-1]["content"]
     assert "[1]" in prompt and "evidence_index" in prompt
+
+
+# --------------------------------------------------------------------------- #
+# 数值溯源的两级口径：题干/正确答案须落在所引片段，干扰项允许跨段取真实值
+# --------------------------------------------------------------------------- #
+
+
+def _block(index: int, text: str) -> Any:
+    """造一个可直接喂给校验器的片段（metadata 只需满足 _evidence_for 读取）。"""
+
+    from backend.agents.state import Evidence
+
+    return Evidence(
+        chunk_id=f"c_test_{index}",
+        text=text,
+        score=1.0,
+        metadata={
+            "doc_title": f"测试手册-{index}",
+            "version": "V1.0",
+            "page": index,
+            "section": f"{index}.1",
+        },
+    )
+
+
+def test_distractor_may_come_from_another_block() -> None:
+    """干扰项取自**另一段**的真实数值 → 必须保留（回归：曾因误杀导致出题缩水）。
+
+    真实场景：极限压力 3.0×10⁻² 在 §1.1、5.0×10⁻² 在 §3.5，任何单段都不同时含两者，
+    旧口径下「谁引谁死」，题目被成批丢弃。
+    """
+
+    from backend.services import training_service as ts
+
+    blocks = [
+        _block(1, "主抽干式真空泵 DP-600 的极限压力为 3.0×10⁻² Pa，抽速 600 m³/h。"),
+        _block(2, "极限压力高于 5.0×10⁻² Pa 时须返修，额定转速 42000 r/min。"),
+    ]
+    # 正确答案 3.0×10⁻² 落在所引的片段 1；干扰项 5.0×10⁻²、42000 来自片段 2
+    candidate = {
+        "question": "DP-600 的极限压力是多少？",
+        "type": "single",
+        "options": ["3.0×10⁻² Pa", "5.0×10⁻² Pa", "42000 r/min", "600 m³/h"],
+        "answer": 0,
+        "explanation": "片段 1 原文",
+        "evidence_index": 1,
+    }
+    item, reason = ts._validate_llm_item(candidate, blocks, ["single"])
+    assert item is not None, f"跨段干扰项被误杀：{reason}"
+    assert item["answer"] == 0
+
+
+def test_distractor_still_rejects_fabricated_number() -> None:
+    """干扰项里的自造数值（全语料都没有）→ 仍然丢弃（防编造红线不放宽）。"""
+
+    from backend.services import training_service as ts
+
+    blocks = [
+        _block(1, "主抽干式真空泵 DP-600 的极限压力为 3.0×10⁻² Pa，抽速 600 m³/h。"),
+    ]
+    candidate = {
+        "question": "DP-600 的极限压力是多少？",
+        "type": "single",
+        "options": ["3.0×10⁻² Pa", "7777 Pa"],
+        "answer": 0,
+        "explanation": "x",
+        "evidence_index": 1,
+    }
+    item, reason = ts._validate_llm_item(candidate, blocks, ["single"])
+    assert item is None
+    assert "干扰项" in reason and "7777" in reason
+
+
+def test_correct_answer_must_be_traceable_to_cited_block() -> None:
+    """正确答案的数值不在**本题所引那一段**里 → 丢弃（防「引用撑不起答案」）。"""
+
+    from backend.services import training_service as ts
+
+    blocks = [
+        _block(1, "主抽干式真空泵 DP-600 的抽速为 600 m³/h。"),
+        _block(2, "极限压力高于 5.0×10⁻² Pa 时须返修。"),
+    ]
+    # 正确答案用了片段 2 的 5.0×10⁻²，却声称依据是片段 1
+    candidate = {
+        "question": "须返修的极限压力阈值是多少？",
+        "type": "single",
+        "options": ["5.0×10⁻² Pa", "3.0×10⁻² Pa"],
+        "answer": 0,
+        "explanation": "x",
+        "evidence_index": 1,
+    }
+    item, reason = ts._validate_llm_item(candidate, blocks, ["single"])
+    assert item is None
+    assert "正确答案" in reason
+
+
+def test_short_answer_points_traced_to_cited_block() -> None:
+    """简答题的要点属于「正确答案」，跨段取值同样要被拦下。"""
+
+    from backend.services import training_service as ts
+
+    blocks = [
+        _block(1, "主抽干式真空泵 DP-600 的抽速为 600 m³/h。"),
+        _block(2, "极限压力高于 5.0×10⁻² Pa 时须返修。"),
+    ]
+    candidate = {
+        "question": "干泵返修的判据是什么？",
+        "type": "short",
+        "options": [],
+        "answer": ["5.0×10⁻² Pa"],
+        "explanation": "x",
+        "evidence_index": 1,
+    }
+    item, reason = ts._validate_llm_item(candidate, blocks, ["short"])
+    assert item is None
+    assert "正确答案" in reason
+
+
+def test_generate_quiz_reports_requested_and_dropped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """出题缩水必须如实回传 requested_items / dropped_items，不静默。"""
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "deepseek_api_key", "sk-test-not-used")
+
+    async def fake_chat_json(messages: list[dict[str, str]], **kwargs: Any) -> list[dict[str, Any]]:
+        return [
+            {  # 合规
+                "question": "日常点检由设备操作员在首片生产前完成，说法是否正确？",
+                "type": "judgement",
+                "options": [],
+                "answer": True,
+                "explanation": "片段 1 原文如此",
+                "evidence_index": 1,
+            },
+            {  # 缺 evidence_index → 丢弃
+                "question": "本手册适用于哪种设备？",
+                "type": "judgement",
+                "options": [],
+                "answer": True,
+                "explanation": "x",
+            },
+        ]
+
+    monkeypatch.setattr(training_service.llm_client, "chat_json", fake_chat_json)
+
+    payload = QuizGenerateRequest(
+        device_model="Etcher-A", topic="日常点检", n_items=2,
+        question_types=["single", "judgement"],
+    )
+    result = _run_db(training_service.generate_quiz(payload, trace_id="test-shortfall"))
+
+    assert result["requested_items"] == 2
+    assert result["n_items"] == 1
+    assert result["dropped_items"] == 1
+
+    # 回看试卷时这两个值不可知，必须给 None（不能编一个 0）
+    fetched = _run_db(training_service.get_quiz(result["id"], trace_id="test-shortfall"))
+    assert fetched is not None
+    assert fetched["requested_items"] is None
+    assert fetched["dropped_items"] is None
 
 
 # --------------------------------------------------------------------------- #
@@ -386,7 +561,7 @@ def test_grading_all_correct_and_all_wrong() -> None:
     assert wrong["detail"][3]["expected"] == ["4000 运行小时", "12 个月"]
 
     # 判分没有顺手发证
-    listed = asyncio.run(
+    listed = _run_db(
         training_service.list_certifications(
             trainee=TRAINEE_GRADE,
             device_model=None,
@@ -434,7 +609,7 @@ def test_issue_certification_requires_passed_attempt() -> None:
     assert failed["passed"] is False
 
     with pytest.raises(ServiceError) as excinfo:
-        asyncio.run(
+        _run_db(
             training_service.issue_certification(
                 CertificationRequest(
                     trainee=TRAINEE_CERT,
@@ -452,7 +627,7 @@ def test_issue_certification_requires_passed_attempt() -> None:
 
     # 不存在的考核记录 → 404（不是 400）
     with pytest.raises(ServiceError) as missing:
-        asyncio.run(
+        _run_db(
             training_service.issue_certification(
                 CertificationRequest(
                     trainee=TRAINEE_CERT,
@@ -471,7 +646,7 @@ def test_issue_certification_success_and_expiry() -> None:
     passed = _submit(quiz_id, TRAINEE_CERT, ANSWERS_ALL_RIGHT)
     assert passed["passed"] is True
 
-    cert = asyncio.run(
+    cert = _run_db(
         training_service.issue_certification(
             CertificationRequest(
                 trainee=TRAINEE_CERT,
@@ -503,7 +678,7 @@ def test_issue_certification_success_and_expiry() -> None:
     assert cert["days_to_expiry"] in (364, 365)
     CertificationResponse.model_validate(cert)
 
-    listed = asyncio.run(
+    listed = _run_db(
         training_service.list_certifications(
             trainee=TRAINEE_CERT,
             device_model="Etcher-A",
@@ -518,7 +693,7 @@ def test_issue_certification_success_and_expiry() -> None:
     CertificationListResponse.model_validate(listed)
 
     # 状态过滤生效
-    none_valid = asyncio.run(
+    none_valid = _run_db(
         training_service.list_certifications(
             trainee=TRAINEE_CERT,
             device_model=None,
@@ -542,7 +717,7 @@ def test_list_expiring_finds_soon_and_overdue(monkeypatch: pytest.MonkeyPatch) -
     assert passed["passed"] is True
 
     # ① 即将到期：有效期只有 1 天
-    soon = asyncio.run(
+    soon = _run_db(
         training_service.issue_certification(
             CertificationRequest(
                 trainee=TRAINEE_EXP,
@@ -567,7 +742,7 @@ def test_list_expiring_finds_soon_and_overdue(monkeypatch: pytest.MonkeyPatch) -
         trainee=TRAINEE_EXP, device_model="Etcher-A", expires_in_days=365
     )
 
-    result = asyncio.run(training_service.list_expiring(days=30, trace_id="test-expiring"))
+    result = _run_db(training_service.list_expiring(days=30, trace_id="test-expiring"))
     by_id = {item["id"]: item for item in result["items"]}
     ids = list(by_id)
 
@@ -587,11 +762,11 @@ def test_list_expiring_finds_soon_and_overdue(monkeypatch: pytest.MonkeyPatch) -
     CertificationListResponse.model_validate(result)
 
     # 窗口放大后 365 天的那条会进来（确认不是被别的原因漏掉）
-    wide = asyncio.run(training_service.list_expiring(days=400, trace_id="test-expiring-wide"))
+    wide = _run_db(training_service.list_expiring(days=400, trace_id="test-expiring-wide"))
     assert far in {item["id"] for item in wide["items"]}
 
     # 吊销记录仍能在认证列表里查到（只是不提醒）
-    revoked_list = asyncio.run(
+    revoked_list = _run_db(
         training_service.list_certifications(
             trainee=TRAINEE_EXP,
             device_model=None,
@@ -610,9 +785,9 @@ def test_list_expiring_finds_soon_and_overdue(monkeypatch: pytest.MonkeyPatch) -
 
 
 def test_missing_quiz_returns_none() -> None:
-    assert asyncio.run(training_service.get_quiz(MISSING_QUIZ_ID, trace_id="test-404")) is None
+    assert _run_db(training_service.get_quiz(MISSING_QUIZ_ID, trace_id="test-404")) is None
     assert (
-        asyncio.run(
+        _run_db(
             training_service.submit_attempt(
                 MISSING_QUIZ_ID,
                 QuizSubmitRequest(trainee=TRAINEE_GRADE, answers=[0]),

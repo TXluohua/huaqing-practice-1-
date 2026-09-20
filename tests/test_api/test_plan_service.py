@@ -29,7 +29,7 @@ import sys
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Awaitable, Iterator
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
@@ -66,9 +66,31 @@ def _code() -> str:
     return f"TEST-PLAN-{uuid.uuid4().hex[:8]}"
 
 
-def _init_db() -> None:
-    available, detail = asyncio.run(db.init_db())
-    assert available, f"数据库不可用：{detail}"
+async def _with_db(scenario: Awaitable[Any]) -> Any:
+    """每个场景自带一次 init_db / dispose_db（连接不跨事件循环复用）。
+
+    必须与场景**在同一个事件循环内**：`db._engine` 是模块级全局缓存，
+    若在 loop A 里 init、在 loop B 里用，MySQL（aiomysql）会报
+    「Future attached to a different loop」；SQLite 的连接实现恰好容忍这种用法，
+    所以这个错误只在 MySQL 下暴露（与 test_parts_service.py 同一范式）。
+    """
+
+    ok, detail = await db.init_db()
+    assert ok, f"数据库不可用：{detail}"
+    try:
+        return await scenario
+    finally:
+        await db.dispose_db()
+
+
+def _run_db(scenario: Awaitable[Any]) -> Any:
+    """跑一个场景：与 init_db / dispose_db 同处一个事件循环。
+
+    名字带 _db 后缀是为了不与本文件里的局部 `async def _run()`（查库辅助）
+    重名 —— 否则替换后会解析到局部函数上。
+    """
+
+    return asyncio.run(_with_db(scenario))
 
 
 @contextlib.contextmanager
@@ -100,7 +122,7 @@ def _generate(**overrides: Any) -> dict:
     }
     params.update(overrides)
     payload = PlanGenerateRequest(**params)
-    return asyncio.run(plan_service.generate_plans(payload, trace_id=f"test-{uuid.uuid4().hex[:6]}"))
+    return _run_db(plan_service.generate_plans(payload, trace_id=f"test-{uuid.uuid4().hex[:6]}"))
 
 
 def _count_rows(device_code: str) -> int:
@@ -113,7 +135,7 @@ def _count_rows(device_code: str) -> int:
             ).scalars().all()
             return len(rows)
 
-    return asyncio.run(_run())
+    return _run_db(_run())
 
 
 def _rows(device_code: str) -> list[MaintenancePlan]:
@@ -129,7 +151,7 @@ def _rows(device_code: str) -> list[MaintenancePlan]:
                 ).scalars().all()
             )
 
-    return asyncio.run(_run())
+    return _run_db(_run())
 
 
 def _chunk_text(chunk_id: str) -> str:
@@ -137,7 +159,7 @@ def _chunk_text(chunk_id: str) -> str:
         blocks = await kb_get_chunk(chunk_id, neighbors=0)
         return "\n".join(block.text for block in blocks)
 
-    return asyncio.run(_run())
+    return _run_db(_run())
 
 
 def _parse(value: str) -> datetime:
@@ -163,7 +185,7 @@ def _list_all(device_model: str, status: str | None = None) -> dict:
     items: list[dict] = []
     total = 0
     for _ in range(50):  # 上限保护：最多 1 万条
-        page = asyncio.run(
+        page = _run_db(
             plan_service.list_plans(
                 device_model=device_model,
                 status=status,
@@ -188,7 +210,6 @@ def _list_all(device_model: str, status: str | None = None) -> dict:
 def test_generate_items_carry_evidence_and_uncovered_lists_rest() -> None:
     """每项都带 evidence + chunk_id，且周期原文能在引用切片里找到；查不到的进 uncovered。"""
 
-    _init_db()
     result = _generate()
 
     items = result["items"]
@@ -232,7 +253,6 @@ def test_generate_items_carry_evidence_and_uncovered_lists_rest() -> None:
 def test_generate_does_not_invent_cycle_for_frequency_only_clauses() -> None:
     """「每班次 / 每次开腔」这类只有频次的条款不得被折算成周期写进计划。"""
 
-    _init_db()
     result = _generate(top_k=20)
     for item in result["items"]:
         raw = _RAW_RE.search(item["note"])
@@ -249,7 +269,6 @@ def test_generate_does_not_invent_cycle_for_frequency_only_clauses() -> None:
 def test_remaining_and_due_at_follow_basis_rules() -> None:
     """运行小时按 24 h/天折算 due_at；片数口径留空；自然日口径按周期天数。"""
 
-    _init_db()
     now = datetime.now(timezone.utc)
     result = _generate(runtime_hours=0.0, wafer_count=0, top_k=20)
 
@@ -273,7 +292,6 @@ def test_remaining_and_due_at_follow_basis_rules() -> None:
 def test_remaining_uses_hours_since_pm_and_baseline() -> None:
     """给了 hours_since_pm 就按「距上次 PM」算，基线回推。"""
 
-    _init_db()
     result = _generate(runtime_hours=5000.0, hours_since_pm=100.0, top_k=20)
     item = _item(result["items"], basis="hours", name_contains="排气过滤器")
     assert item["remaining"] == item["cycle_value"] - 100.0
@@ -285,7 +303,6 @@ def test_remaining_uses_hours_since_pm_and_baseline() -> None:
 def test_overdue_items_become_due() -> None:
     """remaining <= 0 -> status=due；超期的运行小时项 due_at 取当前时间。"""
 
-    _init_db()
     now = datetime.now(timezone.utc)
     result = _generate(runtime_hours=100000.0, wafer_count=100000, top_k=20)
 
@@ -313,7 +330,6 @@ def test_overdue_items_become_due() -> None:
 def test_persist_flag_controls_database_write() -> None:
     """persist=False 只预览；persist=True 落库且 list_plans 查得到（按 remaining 升序）。"""
 
-    _init_db()
     code = _code()
 
     preview = _generate(device_code=code, persist=False, top_k=8)
@@ -335,7 +351,7 @@ def test_persist_flag_controls_database_write() -> None:
     remaining = [item["remaining"] for item in listed["items"]]
     assert remaining == sorted(remaining), "列表必须按 remaining 升序（最紧急在前）"
 
-    first_page = asyncio.run(
+    first_page = _run_db(
         plan_service.list_plans(
             device_model=DEVICE, status=None, limit=5, offset=0, trace_id="test-page"
         )
@@ -349,16 +365,15 @@ def test_persist_flag_controls_database_write() -> None:
 def test_list_plans_filters_and_paginates() -> None:
     """status 过滤、limit/offset 分页与 total 一致。"""
 
-    _init_db()
     code = _code()
     _generate(device_code=code, persist=True, runtime_hours=100000.0, wafer_count=100000, top_k=8)
 
-    page1 = asyncio.run(
+    page1 = _run_db(
         plan_service.list_plans(
             device_model=DEVICE, status=None, limit=2, offset=0, trace_id="t1"
         )
     )
-    page2 = asyncio.run(
+    page2 = _run_db(
         plan_service.list_plans(
             device_model=DEVICE, status=None, limit=2, offset=2, trace_id="t2"
         )
@@ -369,7 +384,7 @@ def test_list_plans_filters_and_paginates() -> None:
     second_ids = {item["id"] for item in page2["items"]}
     assert not (first_ids & second_ids), "分页不应重复返回同一条"
 
-    due = asyncio.run(
+    due = _run_db(
         plan_service.list_plans(
             device_model=DEVICE, status="due", limit=200, offset=0, trace_id="t3"
         )
@@ -381,7 +396,7 @@ def test_list_plans_filters_and_paginates() -> None:
     )
 
     with pytest.raises(ServiceError) as excinfo:
-        asyncio.run(
+        _run_db(
             plan_service.list_plans(
                 device_model=DEVICE, status="不存在的状态", limit=20, offset=0, trace_id="t4"
             )
@@ -398,12 +413,11 @@ def test_list_plans_filters_and_paginates() -> None:
 def test_complete_plan_rolls_to_next_cycle() -> None:
     """完成 -> status=done、remaining 回到 cycle_value、due_at 重算；id 不存在返回 None。"""
 
-    _init_db()
     code = _code()
     result = _generate(device_code=code, persist=True, runtime_hours=1200.0, top_k=20)
     hours_item = _item(result["items"], basis="hours")
 
-    done = asyncio.run(
+    done = _run_db(
         plan_service.complete_plan(
             hours_item["id"],
             PlanUpdateRequest(note="已按手册执行", completed_value=1200.0),
@@ -427,7 +441,7 @@ def test_complete_plan_rolls_to_next_cycle() -> None:
     assert stored.completed_at is not None
     assert stored.status == "done"
 
-    missing = asyncio.run(
+    missing = _run_db(
         plan_service.complete_plan(10_000_000, PlanUpdateRequest(), trace_id="test-complete")
     )
     assert missing is None, "id 不存在必须返回 None（路由翻译成 404）"
@@ -436,12 +450,11 @@ def test_complete_plan_rolls_to_next_cycle() -> None:
 def test_complete_wafers_item_keeps_due_at_empty() -> None:
     """片数口径没有产线速率：完成后 remaining 回滚，但 due_at 仍然留空（不猜）。"""
 
-    _init_db()
     code = _code()
     result = _generate(device_code=code, persist=True, top_k=20)
     wafers_item = _item(result["items"], basis="wafers")
 
-    done = asyncio.run(
+    done = _run_db(
         plan_service.complete_plan(
             wafers_item["id"], PlanUpdateRequest(completed_value=0.0), trace_id="t"
         )
@@ -455,12 +468,11 @@ def test_complete_wafers_item_keeps_due_at_empty() -> None:
 def test_skip_plan_records_reason() -> None:
     """跳过 -> status=skipped，note 追加原因；id 不存在返回 None。"""
 
-    _init_db()
     code = _code()
     result = _generate(device_code=code, persist=True, top_k=8)
     item = result["items"][0]
 
-    skipped = asyncio.run(
+    skipped = _run_db(
         plan_service.skip_plan(item["id"], PlanUpdateRequest(note="备件未到货"), trace_id="test-skip")
     )
     assert skipped is not None
@@ -468,7 +480,7 @@ def test_skip_plan_records_reason() -> None:
     assert "备件未到货" in skipped["note"]
     assert skipped["remaining"] == item["remaining"], "跳过不改变周期与剩余量"
 
-    missing = asyncio.run(
+    missing = _run_db(
         plan_service.skip_plan(10_000_001, PlanUpdateRequest(note="x"), trace_id="test-skip")
     )
     assert missing is None
@@ -482,7 +494,6 @@ def test_skip_plan_records_reason() -> None:
 def test_db_unavailable_raises_503() -> None:
     """数据库不可用一律 503 DB_UNAVAILABLE，而不是 500。"""
 
-    _init_db()
     saved = db._available
     db._available = False
     try:
@@ -498,6 +509,9 @@ def test_db_unavailable_raises_503() -> None:
         ]
         for call in calls:
             with pytest.raises(ServiceError) as excinfo:
+                # 不走 _run_db：它会先 init_db()，而 init_db() 会把 _available
+                # 重新置为 True，正好抵消本用例模拟的「库不可用」。
+                # 服务层在 _require_db() 里于任何取连接之前就抛 503，故无需真实引擎。
                 asyncio.run(call())
             assert excinfo.value.status_code == 503
             assert excinfo.value.code == "DB_UNAVAILABLE"
@@ -507,8 +521,6 @@ def test_db_unavailable_raises_503() -> None:
 
 def test_empty_knowledge_base_yields_uncovered_without_inventing() -> None:
     """知识库为空：items 为空、uncovered 列出全部候选项，绝不编造周期。"""
-
-    _init_db()
 
     async def _empty(*_args: Any, **_kwargs: Any) -> list[Any]:
         return []
@@ -527,14 +539,12 @@ def test_empty_knowledge_base_yields_uncovered_without_inventing() -> None:
 def test_kb_failure_raises_503() -> None:
     """检索整体失败时给 503 KB_UNAVAILABLE（明确报错，而不是默默返回空计划）。"""
 
-    _init_db()
-
     async def _boom(*_args: Any, **_kwargs: Any) -> list[Any]:
         raise RuntimeError("索引损坏")
 
     with _patched(kb_search=_boom):
         with pytest.raises(ServiceError) as excinfo:
-            asyncio.run(
+            _run_db(
                 plan_service.generate_plans(
                     PlanGenerateRequest(device_model=DEVICE, persist=False), trace_id="t"
                 )

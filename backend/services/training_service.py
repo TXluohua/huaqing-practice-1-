@@ -541,8 +541,9 @@ def _render_quiz_prompt(
         '  "evidence_index": 本题依据的片段编号（整数，1 开始，对应上面的 [n]）\n'
         "注意：\n"
         "1. 每道题必须给出 evidence_index，且只能引用上面出现过的编号；\n"
-        "2. 干扰项只能用片段里出现过的其它数值，不许自造数值；\n"
-        "3. short 的 answer 要点要能在片段原文中找到。"
+        "2. 正确答案（含题干里的数值）必须能在本题 evidence_index 所指的那一段里找到；\n"
+        "3. 干扰项可以用上面**任意**片段里出现过的数值，但不许自造数值；\n"
+        "4. short 的 answer 要点要能在本题所引片段的原文中找到。"
     )
 
 
@@ -671,13 +672,31 @@ def _validate_llm_item(
             return None, "简答答案没有要点"
         options = []
 
-    # ---- 数值可溯源校验：题干/选项/简答要点里的数值必须在该片段原文中出现过 ----
-    checked = [question, *options]
-    if qtype == "short":
-        checked.extend(str(point) for point in answer)
-    untraceable = _untraceable_numbers(checked, block.text)
+    # ---- 数值可溯源校验：分两级，按「是否承载事实主张」区分口径 ----
+    #
+    # ① 题干 + **正确答案**：承载事实主张，必须溯源到**本题所引的那一段**，
+    #    否则会出现「答案是真的，但引用撑不起它」。
+    # ② **干扰项**：只是错误选项，不承载事实主张。只要求来自**被展示的全部证据**
+    #    （不许自造数字），不要求与正确答案同段 —— 否则同一手册不同章节的真实数值
+    #    互为干扰项会被误杀（如极限压力 3.0×10⁻² 在 §1.1、5.0×10⁻² 在 §3.5，
+    #    任何单段都不同时含这两个值，出错就必被丢）。
+    claimed = [question]
+    if qtype in ("single", "multiple"):
+        chosen = {answer} if qtype == "single" else set(answer)
+        claimed.extend(option for index, option in enumerate(options) if index in chosen)
+        distractors = [option for index, option in enumerate(options) if index not in chosen]
+    elif qtype == "short":
+        claimed.extend(str(point) for point in answer)
+        distractors = []
+    else:  # judgement：选项固定为「正确 / 错误」，不含数值主张
+        distractors = list(options)
+
+    untraceable = _untraceable_numbers(claimed, block.text)
     if untraceable:
-        return None, f"数值在片段原文中查不到（疑似编造）：{', '.join(untraceable[:3])}"
+        return None, f"题干或正确答案的数值在片段原文中查不到（疑似编造）：{', '.join(untraceable[:3])}"
+    invented = _untraceable_numbers(distractors, "\n".join(item.text for item in blocks))
+    if invented:
+        return None, f"干扰项数值在所有检索片段中都查不到（疑似编造）：{', '.join(invented[:3])}"
 
     explanation = str(candidate.get("explanation") or "").strip()
     if not explanation:
@@ -698,7 +717,11 @@ def _validate_llm_item(
 
 
 def _untraceable_numbers(texts: Sequence[str], evidence_text: str) -> list[str]:
-    """返回文本里「该片段原文中查不到」的数值（空列表表示全部可溯源）。
+    """返回文本里「`evidence_text` 中查不到」的数值（空列表表示全部可溯源）。
+
+    调用方按两级口径使用（见 `_validate_llm_item`）：
+    `evidence_text` 传**本题所引那一段**时校验正确答案，传**全部检索片段拼接**
+    时校验干扰项。
 
     片段侧按**裸数字**建立可溯源集合（含型号/编码里的数字，如 TMP-1600 的 1600），
     题面侧只看独立数值 token —— 模型把「TMP-1600」写成「TMP 1600」不算编造，
@@ -859,10 +882,15 @@ async def generate_quiz(payload: QuizGenerateRequest, *, trace_id: str) -> dict[
     流程与零幻觉约束：
         1. `kb_search` 取 6~8 个片段，**题目只能基于这些片段**；
         2. 有密钥时走 LLM（`llm:<model>`）：要求每题给出 evidence_index，
-           越界/缺失、或题干与选项里出现片段原文查不到的数值 → **丢弃该题**；
+           越界/缺失 → 丢弃；数值按两级溯源（见 `_validate_llm_item`）：
+           **题干与正确答案**必须落在本题所引那一段里，**干扰项**只需来自全部检索片段
+           （不许自造数字，但允许跨段取真实值做干扰项）—— 任一级不过就**丢弃该题**；
         3. 无密钥 / 调用失败 / JSON 解析失败 / 全部被丢弃 → 确定性抽句降级
            （`extractive-fallback`，原句 + 同片段其它数值做干扰项）；
         4. 一道题都出不来 → 422 QUIZ_GENERATION_FAILED（宁可不出题，也不出无依据的题）。
+
+    出题量与请求量可能不等：被丢弃的题**不做补题重试**，`requested_items` /
+    `dropped_items` 如实回传实际缩水情况（宁可少出题，也不出无依据的题）。
     """
 
     _require_db()
@@ -902,6 +930,16 @@ async def generate_quiz(payload: QuizGenerateRequest, *, trace_id: str) -> dict[
         )
 
     rows = _serialize_items(items[: payload.n_items])
+    # 请求题量与依据校验剔除量：**如实回传**，前端据此提示「要求 N 题、实际 M 题」。
+    # 剔除是零幻觉的必然结果（宁可少出题，也不出无依据的题），但不能静默缩水。
+    dropped_items = max(0, payload.n_items - len(rows))
+    if dropped_items:
+        logger.info(
+            "出题缩水：请求 %d 题，实际 %d 题，剔除 %d 题（依据校验未通过）",
+            payload.n_items,
+            len(rows),
+            dropped_items,
+        )
     row = db.TrainingQuiz(
         device_model=payload.device_model.strip(),
         topic=payload.topic.strip(),
@@ -930,6 +968,8 @@ async def generate_quiz(payload: QuizGenerateRequest, *, trace_id: str) -> dict[
         "topic": row.topic,
         "level": row.level,
         "n_items": len(rows),
+        "requested_items": payload.n_items,
+        "dropped_items": dropped_items,
         "items": rows,
         "generator": generator,
         "created_at": _iso(created_at),
@@ -947,6 +987,9 @@ def _quiz_to_dict(row: db.TrainingQuiz, *, trace_id: str) -> dict[str, Any]:
         "topic": row.topic or "",
         "level": row.level or "basic",
         "n_items": int(row.n_items or len(items)),
+        # 请求量 / 剔除量不落库（表结构未加列），回看试卷时如实给 null 而不是编一个
+        "requested_items": None,
+        "dropped_items": None,
         "items": items,
         "generator": row.generator or "",
         "created_at": _iso(row.created_at),
